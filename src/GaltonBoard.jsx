@@ -280,9 +280,10 @@ export default function GaltonBoard() {
     ctx.stroke();
   };
 
-  const G = 1200;
-  const BOUNCE_VY = 120;
-  const AIR_DAMPING = 0.002;
+  const G = 1200; // Gravity acceleration (pixels per second squared)
+  const BOUNCE_COEFFICIENT = 0.618; // Coefficient of restitution (golden ratio)
+  const AIR_DAMPING = 0.001; // Air resistance (horizontal only)
+  const MIN_BOUNCE_VELOCITY = 30; // Minimum bounce velocity to ensure ball continues moving
 
   useEffect(() => { ballsRef.current = []; setBinTallies(Array(rows + 1).fill(0)); }, [rows]);
 
@@ -311,9 +312,10 @@ export default function GaltonBoard() {
 
       ballsRef.current.forEach((b) => {
         if (b.done) return;
+        // Apply gravity (only when falling, not during bounce upward)
         b.vy += G * dt;
+        // Apply air damping to horizontal velocity only
         b.vx *= (1 - AIR_DAMPING);
-        b.vy *= (1 - AIR_DAMPING * 0.5);
 
         if (b.txActive) {
           const u = clamp((now - b.txT0) / 1000 / b.txDur, 0, 1);
@@ -326,17 +328,69 @@ export default function GaltonBoard() {
 
         b.y += b.vy * dt;
 
-        if (b.row < b.rows && b.y >= b.rowYs[b.row]) {
-          const goRight = b.rng() < b.pRight ? 1 : -1;
-          if (goRight > 0) b.rights += 1;
-          b.vy = -Math.abs(BOUNCE_VY);
-          // Current row has (b.row + 1) pegs, so width is b.row * spacing
-          const currentRowWidth = b.row * spacing;
-          const leftBound = boardCenterX - currentRowWidth / 2;
-          const rightBound = boardCenterX + currentRowWidth / 2;
-          const targetX = clamp(b.x + goRight * (b.spacing / 2), leftBound + b.r, rightBound - b.r);
-          b.txStart = b.x; b.txTarget = targetX; b.txT0 = now; b.txDur = 0.14; b.txActive = true;
-          b.vx = 0; b.row += 1;
+        // Check for actual peg collision - ball must be moving downward
+        // Check collisions continuously, even during horizontal movement
+        if (b.row < b.rows && b.vy > 0) {
+          const currentRow = pegRows[b.row];
+          if (currentRow && currentRow.length > 0) {
+            // Check collision with each peg in the current row
+            for (const peg of currentRow) {
+              const dx = b.x - peg.x;
+              const dy = b.y - peg.y;
+              const distance = Math.sqrt(dx * dx + dy * dy);
+              const collisionDistance = pegRadius + b.r;
+              
+              // Ball is colliding with this peg
+              // Allow collision even during horizontal movement, but only once per row
+              if (distance <= collisionDistance) {
+                // Determine probabilistic direction (left or right)
+                const goRight = b.rng() < b.pRight ? 1 : -1;
+                if (goRight > 0) b.rights += 1;
+                
+                // Calculate collision normal (vector from peg center to ball center)
+                const normalX = dx / distance;
+                const normalY = dy / distance;
+                
+                // Calculate incoming velocity
+                const incomingVx = b.vx || 0;
+                const incomingVy = b.vy;
+                const incomingSpeed = Math.abs(incomingVy);
+                
+                // Apply realistic bounce physics with coefficient of restitution
+                // Bounce upward with reduced velocity
+                b.vy = -incomingSpeed * BOUNCE_COEFFICIENT;
+                
+                // Ensure minimum bounce velocity
+                if (Math.abs(b.vy) < MIN_BOUNCE_VELOCITY) {
+                  b.vy = -MIN_BOUNCE_VELOCITY;
+                }
+                
+                // Snap ball X position to peg X position for proper alignment
+                b.x = peg.x;
+                
+                // Calculate target position for the next row
+                // Move half spacing left or right from the peg position
+                const nextRow = b.row + 1;
+                const nextRowWidth = nextRow * spacing;
+                const leftBound = boardCenterX - nextRowWidth / 2;
+                const rightBound = boardCenterX + nextRowWidth / 2;
+                const targetX = clamp(peg.x + goRight * (spacing / 2), leftBound + b.r, rightBound - b.r);
+                
+                // Use horizontal tweening to guide ball toward next row's pegs
+                // This ensures proper alignment while maintaining realistic vertical bounce
+                b.txStart = b.x; 
+                b.txTarget = targetX; 
+                b.txT0 = now; 
+                b.txDur = 0.14; 
+                b.txActive = true;
+                b.vx = 0; // Clear horizontal velocity, tweening handles it
+                
+                // Increment row to track progress
+                b.row += 1;
+                break; // Only collide with one peg per frame
+              }
+            }
+          }
         }
 
         // Bottom row has 'rows' pegs, so width is (rows - 1) * spacing
@@ -367,7 +421,7 @@ export default function GaltonBoard() {
 
     rafId = requestAnimationFrame(step);
     return () => cancelAnimationFrame(rafId);
-  }, [width, height, rows, spacing, boardCenterX, boardBottom, rowYs, G, BOUNCE_VY, pegRows, binCenters, binTallies, binHeight]);
+  }, [width, height, rows, spacing, boardCenterX, boardBottom, rowYs, G, BOUNCE_COEFFICIENT, MIN_BOUNCE_VELOCITY, pegRows, binCenters, binTallies, binHeight]);
 
   // Calculate standard deviation positions
   const stdDevPositions = useMemo(() => {
@@ -376,14 +430,14 @@ export default function GaltonBoard() {
     const mean = stats.mean;
     const sd = stats.stdDev;
     
-    // Calculate positions for -3σ, -2σ, -1σ, 0, 1σ, 2σ, 3σ
+    // Calculate positions for -3σ, -2σ, -1σ, μ (0), 1σ, 2σ, 3σ
     // Only include positions that are within valid bin range
     for (let i = -3; i <= 3; i++) {
       const position = mean + (i * sd);
       const binIndex = Math.round(position);
       if (binIndex >= 0 && binIndex < binCount) {
-        // Avoid duplicates
-        const existing = positions.find(p => Math.abs(p.position - position) < 0.1);
+        // Avoid duplicates by checking binIndex instead of position
+        const existing = positions.find(p => p.binIndex === binIndex);
         if (!existing) {
           positions.push({
             value: i,
@@ -394,7 +448,7 @@ export default function GaltonBoard() {
         }
       }
     }
-    return positions.sort((a, b) => a.position - b.position);
+    return positions.sort((a, b) => a.binIndex - b.binIndex);
   }, [stats, binCount, totalBalls]);
 
   const histData = useMemo(() => {
@@ -686,11 +740,8 @@ export default function GaltonBoard() {
                       }}
                     />
                     <Bar dataKey="percentage" fill="#0ea5e9" radius={[6, 6, 0, 0]} name="Percentage" />
-                    {/* Standard deviation reference lines */}
-                    {stdDevPositions.map((sd, idx) => {
-                      // Alternate label positions to avoid overlap
-                      const labelPosition = idx % 2 === 0 ? "top" : "bottom";
-                      const offset = idx % 2 === 0 ? -5 : 5;
+                    {/* Standard deviation reference lines - labels only at top to avoid overlap with bin numbers */}
+                    {stdDevPositions.map((sd) => {
                       return (
                         <ReferenceLine
                           key={`${sd.value}-${sd.binIndex}`}
@@ -700,11 +751,11 @@ export default function GaltonBoard() {
                           strokeDasharray="2 2"
                           label={{ 
                             value: sd.label, 
-                            position: labelPosition, 
+                            position: "top", 
                             fontSize: 9, 
                             fill: '#64748b', 
                             fontWeight: 'bold', 
-                            offset: offset 
+                            offset: -5 
                           }}
                         />
                       );
