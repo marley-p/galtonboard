@@ -1,4 +1,5 @@
 import GaltonBoard from "./GaltonBoard.jsx";
+import "./App.css";
 
 export default function App() {
   return (

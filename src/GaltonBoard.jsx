@@ -40,6 +40,7 @@ export default function GaltonBoard() {
   const bottomMargin = 200; // Increased to accommodate bins
   const sidePadding = 40; // padding on left and right sides
   const binHeight = 80; // Height of bins below the board
+  const gapBeforeHorizontalLine = 25; // Space between last peg row and horizontal divider
   
   // Calculate dynamic width based on number of rows (bottom row has most pegs)
   const width = useMemo(() => {
@@ -50,14 +51,19 @@ export default function GaltonBoard() {
     return Math.max(520, minWidth); // Ensure minimum width of 520 for smaller row counts
   }, [rows, spacing, sidePadding, pegRadius]);
   
-  // Calculate dynamic height based on number of rows
-  const height = useMemo(() => {
-    return topMargin + rows * spacing + bottomMargin + binHeight;
-  }, [rows, spacing, topMargin, bottomMargin, binHeight]);
-
   const boardCenterX = width / 2;
   const boardTop = topMargin + 20;
-  const boardBottom = height - bottomMargin - binHeight;
+  
+  // Calculate dynamic height based on number of rows
+  const height = useMemo(() => {
+    const lastPegRowY = boardTop + (rows - 1) * spacing;
+    const boardBottom = lastPegRowY + gapBeforeHorizontalLine;
+    return boardBottom + bottomMargin + binHeight;
+  }, [rows, spacing, boardTop, bottomMargin, binHeight, gapBeforeHorizontalLine]);
+  
+  // Calculate where the last peg row ends, then add gap before horizontal line
+  const lastPegRowY = boardTop + (rows - 1) * spacing;
+  const boardBottom = lastPegRowY + gapBeforeHorizontalLine;
 
   const canvasRef = useRef(null);
   const ballsRef = useRef([]);
@@ -86,9 +92,11 @@ export default function GaltonBoard() {
   const totalBalls = binTallies.reduce((a, b) => a + b, 0);
 
   // Calculate bin centers and positions for visualization
+  // binCount = rows + 1, so we need to center rows + 1 bins
+  // Total width of bins = rows * spacing (since bins are between dividers)
   const binCenters = useMemo(() => {
-    const bottomRowWidth = (rows - 1) * spacing;
-    const startX = boardCenterX - bottomRowWidth / 2;
+    const totalBinWidth = rows * spacing;
+    const startX = boardCenterX - totalBinWidth / 2 + spacing / 2; // First bin center
     return Array.from({ length: binCount }, (_, i) => ({
       x: startX + i * spacing,
       binIndex: i
@@ -214,13 +222,19 @@ export default function GaltonBoard() {
     ctx.strokeStyle = "#cbd5e1";
     ctx.lineWidth = 1;
     
-    // Draw bin dividers
-    binCenters.forEach((bin, i) => {
+    // Draw vertical dividers - we need binCount dividers (leftmost + dividers between bins)
+    // Calculate the leftmost divider position to match the board structure
+    const totalBinWidth = rows * spacing;
+    const leftmostDividerX = boardCenterX - totalBinWidth / 2;
+    
+    // Draw dividers (binCount lines total, excluding the rightmost divider)
+    for (let i = 0; i < binCount; i++) {
+      const dividerX = leftmostDividerX + i * spacing;
       ctx.beginPath();
-      ctx.moveTo(bin.x, binTop);
-      ctx.lineTo(bin.x, binBottom);
+      ctx.moveTo(dividerX, binTop);
+      ctx.lineTo(dividerX, binBottom);
       ctx.stroke();
-    });
+    }
 
     // Draw accumulated balls in bins (simplified representation)
     ctx.fillStyle = "#0ea5e9";
@@ -258,11 +272,11 @@ export default function GaltonBoard() {
   const drawGround = (ctx) => {
     ctx.strokeStyle = "#cbd5e1"; 
     ctx.lineWidth = 1;
-    // Bottom row has 'rows' pegs, so width is (rows - 1) * spacing
-    const bottomRowWidth = (rows - 1) * spacing;
+    // Draw horizontal bar full width
+    const margin = 20; // Small margin from edges
     ctx.beginPath();
-    ctx.moveTo(boardCenterX - bottomRowWidth / 2 - spacing / 2, boardBottom);
-    ctx.lineTo(boardCenterX + bottomRowWidth / 2 + spacing / 2, boardBottom);
+    ctx.moveTo(margin, boardBottom);
+    ctx.lineTo(width - margin, boardBottom);
     ctx.stroke();
   };
 
@@ -357,23 +371,30 @@ export default function GaltonBoard() {
 
   // Calculate standard deviation positions
   const stdDevPositions = useMemo(() => {
-    if (totalBalls === 0 || stats.stdDev === 0) return [];
+    if (totalBalls === 0 || stats.stdDev === 0 || stats.stdDev < 0.1) return [];
     const positions = [];
     const mean = stats.mean;
     const sd = stats.stdDev;
     
     // Calculate positions for -3σ, -2σ, -1σ, 0, 1σ, 2σ, 3σ
+    // Only include positions that are within valid bin range
     for (let i = -3; i <= 3; i++) {
       const position = mean + (i * sd);
-      if (position >= 0 && position < binCount) {
-        positions.push({
-          value: i,
-          position: position,
-          label: i === 0 ? 'μ' : `${i}σ`
-        });
+      const binIndex = Math.round(position);
+      if (binIndex >= 0 && binIndex < binCount) {
+        // Avoid duplicates
+        const existing = positions.find(p => Math.abs(p.position - position) < 0.1);
+        if (!existing) {
+          positions.push({
+            value: i,
+            position: position,
+            binIndex: binIndex,
+            label: i === 0 ? 'μ' : `${i}σ`
+          });
+        }
       }
     }
-    return positions;
+    return positions.sort((a, b) => a.position - b.position);
   }, [stats, binCount, totalBalls]);
 
   const histData = useMemo(() => {
@@ -388,24 +409,29 @@ export default function GaltonBoard() {
     // Calculate normal distribution curve points (as percentages)
     if (totalBalls > 10 && stats.stdDev > 0.1) {
       const maxPercentage = Math.max(...data.map(d => d.percentage), 1);
+      const mu = stats.mean;
+      const sigma = stats.stdDev;
       
-      for (let i = 0; i < binCount; i++) {
-        // Normal distribution PDF
-        const x = i;
-        const mu = stats.mean;
-        const sigma = stats.stdDev;
+      if (sigma > 0 && maxPercentage > 0) {
+        // Calculate the area under the normal curve that should match the total percentage
+        // We'll scale the PDF to match the peak of the histogram
+        let maxNormalValue = 0;
+        const normalValues = [];
         
-        if (sigma > 0) {
+        for (let i = 0; i < binCount; i++) {
+          const x = i;
           const coefficient = 1 / (sigma * Math.sqrt(2 * Math.PI));
           const exponent = -0.5 * Math.pow((x - mu) / sigma, 2);
           const pdfValue = coefficient * Math.exp(exponent);
-          
-          // Convert PDF to percentage (scale to match the histogram)
-          // The PDF value needs to be scaled to percentage
-          const maxPdf = coefficient; // Maximum PDF value (at mean)
-          const scaledPercentage = (pdfValue / maxPdf) * maxPercentage;
-          
-          data[i].normal = scaledPercentage;
+          normalValues.push(pdfValue);
+          maxNormalValue = Math.max(maxNormalValue, pdfValue);
+        }
+        
+        // Scale to match the histogram peak
+        if (maxNormalValue > 0) {
+          for (let i = 0; i < binCount; i++) {
+            data[i].normal = (normalValues[i] / maxNormalValue) * maxPercentage;
+          }
         }
       }
     }
@@ -447,38 +473,38 @@ export default function GaltonBoard() {
 
   return (
     <div className="w-full min-h-screen bg-slate-50 flex items-center justify-center py-8">
-      <div className="w-full max-w-7xl mx-auto px-4 box-border text-slate-900 flex flex-col gap-6">
+      <div className="w-full max-w-7xl mx-auto px-4 box-border text-slate-900 flex flex-col gap-5">
         {/* Controls at Top */}
-        <div className="bg-white rounded-2xl shadow-lg p-6 sm:p-8">
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6 mb-8 pb-6 border-b border-slate-200">
-            <h1 className="text-2xl sm:text-3xl font-bold m-0 text-slate-900">Interactive Galton Board</h1>
-            <div className="flex flex-wrap gap-3">
+        <div className="bg-white rounded-xl shadow-md p-5 sm:p-6 mx-auto w-full max-w-4xl">
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-6 pb-4 border-b border-slate-200">
+            <h1 className="text-xl sm:text-2xl font-bold m-0 text-slate-900">Interactive Galton Board</h1>
+            <div className="flex flex-wrap gap-2">
               <button 
                 onClick={() => setRunning((r) => !r)} 
-                className="px-6 py-2.5 rounded-lg border-0 bg-[#1e4e78] hover:bg-[#1a4266] text-white cursor-pointer font-semibold transition-all shadow-md hover:shadow-lg active:scale-95"
+                className="px-5 py-2 rounded-lg border-0 bg-[#1e4e78] hover:bg-[#1a4266] text-white cursor-pointer font-medium transition-all shadow-sm hover:shadow active:scale-95 text-sm"
               >
                 {running ? "⏸ Stop" : "▶ Start"}
               </button>
               <button 
                 onClick={launchBall} 
-                className="px-6 py-2.5 rounded-lg border-0 bg-[#1e4e78] hover:bg-[#1a4266] text-white cursor-pointer font-semibold transition-all shadow-md hover:shadow-lg active:scale-95"
+                className="px-5 py-2 rounded-lg border-0 bg-[#1e4e78] hover:bg-[#1a4266] text-white cursor-pointer font-medium transition-all shadow-sm hover:shadow active:scale-95 text-sm"
               >
                 Drop 1 Ball
               </button>
               <button 
                 onClick={reset} 
-                className="px-6 py-2.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-900 cursor-pointer font-semibold transition-all shadow-sm hover:shadow-md active:scale-95"
+                className="px-5 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-900 cursor-pointer font-medium transition-all shadow-sm hover:shadow active:scale-95 text-sm"
               >
                 Reset
               </button>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="bg-slate-50 rounded-xl p-4 border border-slate-200">
-              <div className="flex items-center justify-between mb-3">
-                <label className="text-sm font-semibold text-slate-700">Rows</label>
-                <span className="text-lg font-bold text-[#1e4e78] bg-white px-3 py-1 rounded-md">{rows}</span>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-xs font-semibold text-slate-700">Rows</label>
+                <span className="text-base font-bold text-[#1e4e78] bg-white px-2 py-0.5 rounded-md">{rows}</span>
               </div>
               <input 
                 type="range" 
@@ -494,10 +520,10 @@ export default function GaltonBoard() {
               </div>
             </div>
             
-            <div className="bg-slate-50 rounded-xl p-4 border border-slate-200">
-              <div className="flex items-center justify-between mb-3">
-                <label className="text-sm font-semibold text-slate-700">Drop Interval</label>
-                <span className="text-lg font-bold text-[#1e4e78] bg-white px-3 py-1 rounded-md">{dropIntervalMs}ms</span>
+            <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-xs font-semibold text-slate-700">Drop Interval</label>
+                <span className="text-base font-bold text-[#1e4e78] bg-white px-2 py-0.5 rounded-md">{dropIntervalMs}ms</span>
               </div>
               <input 
                 type="range" 
@@ -513,10 +539,10 @@ export default function GaltonBoard() {
               </div>
             </div>
             
-            <div className="bg-slate-50 rounded-xl p-4 border border-slate-200">
-              <div className="flex items-center justify-between mb-3">
-                <label className="text-sm font-semibold text-slate-700">Right Probability</label>
-                <span className="text-lg font-bold text-[#1e4e78] bg-white px-3 py-1 rounded-md">{(pRight * 100).toFixed(1)}%</span>
+            <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-xs font-semibold text-slate-700">Right Probability</label>
+                <span className="text-base font-bold text-[#1e4e78] bg-white px-2 py-0.5 rounded-md">{(pRight * 100).toFixed(1)}%</span>
               </div>
               <input 
                 type="range" 
@@ -536,8 +562,8 @@ export default function GaltonBoard() {
         </div>
 
         {/* Main Board Card - Centered */}
-        <div className="bg-white rounded-2xl shadow-lg p-4 sm:p-6 mx-auto w-full max-w-4xl">
-          <div className="relative w-full border-2 border-[#f2f2f2] rounded-xl overflow-hidden bg-[#f7f7f7] mb-4">
+        <div className="bg-white rounded-xl shadow-md p-4 sm:p-5 mx-auto w-full max-w-4xl">
+          <div className="relative w-full border-2 border-[#f2f2f2] rounded-lg overflow-hidden bg-[#f7f7f7] mb-3">
             <canvas 
               ref={canvasRef} 
               width={width} 
@@ -545,49 +571,49 @@ export default function GaltonBoard() {
               className="w-full h-auto block" 
             />
           </div>
-          <div className="text-sm text-slate-600 text-center">
-            <p className="mb-2"><strong>Balls tallied:</strong> {totalBalls}</p>
+          <div className="text-xs text-slate-600 text-center">
+            <p className="mb-1"><strong>Balls tallied:</strong> {totalBalls}</p>
             <p className="text-xs text-slate-500 italic">
-              Eventually the distribution will approach what is called the normal distribution.
+              Eventually the distribution will approach "normal distribution".
             </p>
           </div>
         </div>
 
         {/* Statistics and Distribution at Bottom - Full Width */}
-        <div className="bg-white rounded-2xl shadow-lg p-6 sm:p-8">
-          <h3 className="text-2xl font-bold mb-8 text-slate-900 border-b-2 border-slate-200 pb-4">Statistics & Distribution</h3>
+        <div className="bg-white rounded-xl shadow-md p-5 sm:p-6 mx-auto w-full max-w-4xl">
+          <h3 className="text-xl font-bold mb-6 text-slate-900 border-b border-slate-200 pb-3">Statistics & Distribution</h3>
           
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
             {/* Key Metrics */}
             <div>
-              <h4 className="text-sm font-semibold text-slate-700 mb-4 uppercase tracking-wide">Key Metrics</h4>
-              <div className="grid grid-cols-2 gap-4">
+              <h4 className="text-xs font-semibold text-slate-700 mb-3 uppercase tracking-wide">Key Metrics</h4>
+              <div className="grid grid-cols-2 gap-3">
                 {/* Actual Statistics */}
-                <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-5 border border-blue-200 shadow-sm">
-                  <div className="text-xs text-blue-700 uppercase tracking-wide mb-3 font-semibold">Actual (Observed)</div>
-                  <div className="space-y-4">
+                <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg p-4 border border-blue-200">
+                  <div className="text-xs text-blue-700 uppercase tracking-wide mb-2 font-semibold">Actual (Observed)</div>
+                  <div className="space-y-3">
                     <div>
                       <div className="text-xs text-blue-600 font-medium mb-1">Mean</div>
-                      <div className="text-3xl font-bold text-blue-900">{stats.mean.toFixed(2)}</div>
+                      <div className="text-2xl font-bold text-blue-900">{stats.mean.toFixed(2)}</div>
                     </div>
                     <div>
                       <div className="text-xs text-blue-600 font-medium mb-1">Std Dev</div>
-                      <div className="text-3xl font-bold text-blue-900">{stats.stdDev.toFixed(2)}</div>
+                      <div className="text-2xl font-bold text-blue-900">{stats.stdDev.toFixed(2)}</div>
                     </div>
                   </div>
                 </div>
                 
                 {/* Expected Statistics */}
-                <div className="bg-gradient-to-br from-slate-50 to-slate-100 rounded-xl p-5 border border-slate-200 shadow-sm">
-                  <div className="text-xs text-slate-600 uppercase tracking-wide mb-3 font-semibold">Expected (Theoretical)</div>
-                  <div className="space-y-4">
+                <div className="bg-gradient-to-br from-slate-50 to-slate-100 rounded-lg p-4 border border-slate-200">
+                  <div className="text-xs text-slate-600 uppercase tracking-wide mb-2 font-semibold">Expected (Theoretical)</div>
+                  <div className="space-y-3">
                     <div>
                       <div className="text-xs text-slate-600 font-medium mb-1">Mean</div>
-                      <div className="text-3xl font-bold text-slate-800">{stats.expectedMean.toFixed(2)}</div>
+                      <div className="text-2xl font-bold text-slate-800">{stats.expectedMean.toFixed(2)}</div>
                     </div>
                     <div>
                       <div className="text-xs text-slate-600 font-medium mb-1">Std Dev</div>
-                      <div className="text-3xl font-bold text-slate-800">{stats.expectedStdDev.toFixed(2)}</div>
+                      <div className="text-2xl font-bold text-slate-800">{stats.expectedStdDev.toFixed(2)}</div>
                     </div>
                   </div>
                 </div>
@@ -597,16 +623,16 @@ export default function GaltonBoard() {
             {/* Bin Percentages */}
             {totalBalls > 0 && (
               <div>
-                <h4 className="text-sm font-semibold text-slate-700 mb-4 uppercase tracking-wide">Bin Percentages</h4>
-                <div className="bg-slate-50 rounded-xl p-4 border border-slate-200">
-                  <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-4 xl:grid-cols-6 gap-3">
+                <h4 className="text-xs font-semibold text-slate-700 mb-3 uppercase tracking-wide">Bin Percentages</h4>
+                <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
+                  <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-4 xl:grid-cols-6 gap-2">
                     {binTallies.map((count, i) => (
                       <div 
                         key={i} 
-                        className="bg-white rounded-lg p-3 text-center border border-slate-200 hover:border-[#1e4e78] hover:shadow-md transition-all"
+                        className="bg-white rounded-md p-2 text-center border border-slate-200 hover:border-[#1e4e78] hover:shadow-sm transition-all"
                       >
-                        <div className="text-xs font-semibold text-slate-600 mb-1">Bin {i}</div>
-                        <div className="text-xl font-bold text-[#1e4e78] mb-1">{stats.percentages[i]}%</div>
+                        <div className="text-xs font-semibold text-slate-600 mb-0.5">Bin {i}</div>
+                        <div className="text-lg font-bold text-[#1e4e78] mb-0.5">{stats.percentages[i]}%</div>
                         <div className="text-xs text-slate-500">{count} balls</div>
                       </div>
                     ))}
@@ -618,17 +644,17 @@ export default function GaltonBoard() {
 
           {/* Histogram - Full Width */}
           <div>
-            <div className="flex items-center justify-between mb-4">
-              <h4 className="text-lg font-semibold text-slate-900">Distribution (Percentages)</h4>
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="text-base font-semibold text-slate-900">Distribution (Percentages)</h4>
               {totalBalls > 10 && stats.stdDev > 0 && (
-                <div className="flex items-center gap-2 text-sm text-slate-600">
-                  <div className="w-4 h-0.5 bg-red-500"></div>
+                <div className="flex items-center gap-2 text-xs text-slate-600">
+                  <div className="w-3 h-0.5 bg-red-500"></div>
                   <span>Theoretical Normal Distribution</span>
                 </div>
               )}
             </div>
-            <div className="bg-[#f7f7f7] rounded-xl p-6 border-2 border-[#f2f2f2]">
-              <div className="h-80 relative">
+            <div className="bg-[#f7f7f7] rounded-lg p-4 border-2 border-[#f2f2f2]">
+              <div className="h-72 relative">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={histData} margin={{ top: 10, right: 10, left: 0, bottom: 30 }}>
                     <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="#e2e8f0" />
@@ -661,17 +687,29 @@ export default function GaltonBoard() {
                     />
                     <Bar dataKey="percentage" fill="#0ea5e9" radius={[6, 6, 0, 0]} name="Percentage" />
                     {/* Standard deviation reference lines */}
-                    {stdDevPositions.map((sd, idx) => (
-                      <ReferenceLine
-                        key={idx}
-                        x={`${Math.round(sd.position)}`}
-                        stroke="#94a3b8"
-                        strokeWidth={1}
-                        strokeDasharray="2 2"
-                        label={{ value: sd.label, position: "bottom", fontSize: 10, fill: '#64748b', fontWeight: 'bold', offset: 5 }}
-                      />
-                    ))}
-                    {totalBalls > 10 && stats.stdDev > 0 && (
+                    {stdDevPositions.map((sd, idx) => {
+                      // Alternate label positions to avoid overlap
+                      const labelPosition = idx % 2 === 0 ? "top" : "bottom";
+                      const offset = idx % 2 === 0 ? -5 : 5;
+                      return (
+                        <ReferenceLine
+                          key={`${sd.value}-${sd.binIndex}`}
+                          x={`${sd.binIndex}`}
+                          stroke="#94a3b8"
+                          strokeWidth={1}
+                          strokeDasharray="2 2"
+                          label={{ 
+                            value: sd.label, 
+                            position: labelPosition, 
+                            fontSize: 9, 
+                            fill: '#64748b', 
+                            fontWeight: 'bold', 
+                            offset: offset 
+                          }}
+                        />
+                      );
+                    })}
+                    {totalBalls > 10 && stats.stdDev > 0.1 && (
                       <Line 
                         type="monotone" 
                         dataKey="normal" 
@@ -679,6 +717,7 @@ export default function GaltonBoard() {
                         strokeWidth={2} 
                         dot={false}
                         name="Normal Distribution"
+                        isAnimationActive={false}
                       />
                     )}
                   </BarChart>
