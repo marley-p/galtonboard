@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, LineChart, Line, ReferenceLine } from "recharts";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, LineChart, Line, ReferenceLine, LabelList } from "recharts";
 
 // clamp helper
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -31,6 +31,8 @@ export default function GaltonBoard() {
   const [dropIntervalMs, setDropIntervalMs] = useState(500);
   const [bias, setBias] = useState(0);
   const [running, setRunning] = useState(false);
+  const [ballsDropped, setBallsDropped] = useState(0);
+  const [showStats, setShowStats] = useState(true);
 
   // Geometry - dynamic sizing based on rows
   const spacing = 28; // fixed spacing
@@ -153,6 +155,7 @@ export default function GaltonBoard() {
     const x0 = boardCenterX;
     const y0 = boardTop - spacing * 0.8;
     ballsRef.current.push(new QBall({ x0, y0, r: ballRadius, rows, spacing, pRight, rng: rngRef.current, rowYs }));
+    setBallsDropped((d) => d + 1);
   }, [boardCenterX, boardTop, spacing, ballRadius, rows, pRight, rowYs]);
 
   // Update the ref whenever launchBall changes
@@ -207,7 +210,7 @@ export default function GaltonBoard() {
     }
   }, [dropIntervalMs, running]);
 
-  const reset = () => { ballsRef.current = []; setBinTallies(Array(binCount).fill(0)); };
+  const reset = () => { ballsRef.current = []; setBinTallies(Array(binCount).fill(0)); setBallsDropped(0); };
 
   const drawPegs = (ctx) => {
     ctx.fillStyle = "#94a3b8";
@@ -227,8 +230,8 @@ export default function GaltonBoard() {
     const totalBinWidth = rows * spacing;
     const leftmostDividerX = boardCenterX - totalBinWidth / 2;
     
-    // Draw dividers (binCount lines total, excluding the rightmost divider)
-    for (let i = 0; i < binCount; i++) {
+    // Draw dividers: binCount+1 lines to define left edge, between bins, and right edge
+    for (let i = 0; i <= binCount; i++) {
       const dividerX = leftmostDividerX + i * spacing;
       ctx.beginPath();
       ctx.moveTo(dividerX, binTop);
@@ -285,7 +288,8 @@ export default function GaltonBoard() {
   const AIR_DAMPING = 0.001; // Air resistance (horizontal only)
   const MIN_BOUNCE_VELOCITY = 30; // Minimum bounce velocity to ensure ball continues moving
 
-  useEffect(() => { ballsRef.current = []; setBinTallies(Array(rows + 1).fill(0)); }, [rows]);
+  useEffect(() => { ballsRef.current = []; setBinTallies(Array(rows + 1).fill(0)); setBallsDropped(0); }, [rows]);
+  useEffect(() => { ballsRef.current = []; setBinTallies(Array(rows + 1).fill(0)); setBallsDropped(0); }, [bias]);
 
   // Update canvas dimensions when height changes
   useEffect(() => {
@@ -348,11 +352,11 @@ export default function GaltonBoard() {
                 if (goRight > 0) b.rights += 1;
                 
                 // Calculate collision normal (vector from peg center to ball center)
-                const normalX = dx / distance;
-                const normalY = dy / distance;
+                const _normalX = dx / distance;
+                const _normalY = dy / distance;
                 
                 // Calculate incoming velocity
-                const incomingVx = b.vx || 0;
+                const _incomingVx = b.vx || 0;
                 const incomingVy = b.vy;
                 const incomingSpeed = Math.abs(incomingVy);
                 
@@ -457,6 +461,7 @@ export default function GaltonBoard() {
       bin: `${i}`, 
       count: v,
       percentage: totalBalls > 0 ? (v / totalBalls * 100) : 0,
+      barLabel: totalBalls > 0 ? `${v} (${(v / totalBalls * 100).toFixed(1)}%)` : '0 (0.0%)',
       normal: 0 
     }));
     
@@ -531,8 +536,13 @@ export default function GaltonBoard() {
         {/* Controls at Top */}
         <div className="bg-white rounded-xl shadow-md p-5 sm:p-6 mx-auto w-full max-w-4xl">
           <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-6 pb-4 border-b border-slate-200">
-            <h1 className="text-xl sm:text-2xl font-bold m-0 text-slate-900">Interactive Galton Board</h1>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-4">
+              <h1 className="text-xl sm:text-2xl font-bold m-0 text-slate-900">Interactive Galton Board</h1>
+              <span className="text-sm text-slate-600">
+                <strong>Balls dropped:</strong> {ballsDropped} &nbsp;|&nbsp; <strong>Tallied:</strong> {totalBalls}
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
               <button 
                 onClick={() => setRunning((r) => !r)} 
                 className="px-5 py-2 rounded-lg border-0 bg-[#1e4e78] hover:bg-[#1a4266] text-white cursor-pointer font-medium transition-all shadow-sm hover:shadow active:scale-95 text-sm"
@@ -562,41 +572,22 @@ export default function GaltonBoard() {
               </div>
               <input 
                 type="range" 
-                min={5} 
+                min={1} 
                 max={20} 
                 value={rows} 
                 onChange={(e) => { setRows(parseInt(e.target.value)); }}
                 className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-[#1e4e78]"
               />
               <div className="flex justify-between text-xs text-slate-500 mt-1">
-                <span>5</span>
+                <span>1</span>
                 <span>20</span>
               </div>
             </div>
             
             <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
               <div className="flex items-center justify-between mb-2">
-                <label className="text-xs font-semibold text-slate-700">Drop Interval</label>
-                <span className="text-base font-bold text-[#1e4e78] bg-white px-2 py-0.5 rounded-md">{dropIntervalMs}ms</span>
-              </div>
-              <input 
-                type="range" 
-                min={40} 
-                max={1500} 
-                value={dropIntervalMs} 
-                onChange={(e) => { setDropIntervalMs(parseInt(e.target.value)); }}
-                className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-[#1e4e78]"
-              />
-              <div className="flex justify-between text-xs text-slate-500 mt-1">
-                <span>40ms</span>
-                <span>1500ms</span>
-              </div>
-            </div>
-            
-            <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
-              <div className="flex items-center justify-between mb-2">
-                <label className="text-xs font-semibold text-slate-700">Right Probability</label>
-                <span className="text-base font-bold text-[#1e4e78] bg-white px-2 py-0.5 rounded-md">{(pRight * 100).toFixed(1)}%</span>
+                <label className="text-xs font-semibold text-slate-700">Left/Right Probability</label>
+                <span className="text-base font-bold text-[#1e4e78] bg-white px-2 py-0.5 rounded-md">{((1 - pRight) * 100).toFixed(0)}% / {(pRight * 100).toFixed(0)}%</span>
               </div>
               <input 
                 type="range" 
@@ -608,8 +599,27 @@ export default function GaltonBoard() {
                 className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-[#1e4e78]"
               />
               <div className="flex justify-between text-xs text-slate-500 mt-1">
-                <span>25%</span>
-                <span>75%</span>
+                <span>75% / 25%</span>
+                <span>25% / 75%</span>
+              </div>
+            </div>
+            
+            <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-xs font-semibold text-slate-700">Drop Interval</label>
+                <span className="text-base font-bold text-[#1e4e78] bg-white px-2 py-0.5 rounded-md">{(dropIntervalMs / 1000).toFixed(2)} s</span>
+              </div>
+              <input 
+                type="range" 
+                min={40} 
+                max={1500} 
+                value={dropIntervalMs} 
+                onChange={(e) => { setDropIntervalMs(parseInt(e.target.value)); }}
+                className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-[#1e4e78]"
+              />
+              <div className="flex justify-between text-xs text-slate-500 mt-1">
+                <span>0.04 s</span>
+                <span>1.5 s</span>
               </div>
             </div>
           </div>
@@ -617,23 +627,29 @@ export default function GaltonBoard() {
 
         {/* Main Board Card - Centered */}
         <div className="bg-white rounded-xl shadow-md p-4 sm:p-5 mx-auto w-full max-w-4xl">
-          <div className="relative w-full border-2 border-[#f2f2f2] rounded-lg overflow-hidden bg-[#f7f7f7] mb-3">
+          <div className="relative w-full max-h-[70vh] overflow-hidden border-2 border-[#f2f2f2] rounded-lg bg-[#f7f7f7] flex items-start justify-center">
             <canvas 
               ref={canvasRef} 
               width={width} 
               height={height} 
-              className="w-full h-auto block" 
+              className="max-h-[70vh] w-auto h-auto object-contain block" 
             />
-          </div>
-          <div className="text-xs text-slate-600 text-center">
-            <p className="mb-1"><strong>Balls tallied:</strong> {totalBalls}</p>
-            <p className="text-xs text-slate-500 italic">
-              Eventually the distribution will approach "normal distribution".
-            </p>
           </div>
         </div>
 
-        {/* Statistics and Distribution at Bottom - Full Width */}
+        {/* Toggle and Statistics and Distribution at Bottom - Full Width */}
+        <div className="mx-auto w-full max-w-4xl flex items-center gap-2 mb-2">
+          <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-700">
+            <input 
+              type="checkbox" 
+              checked={showStats} 
+              onChange={(e) => setShowStats(e.target.checked)}
+              className="rounded border-slate-300 accent-[#1e4e78]"
+            />
+            Show Statistics & Distribution
+          </label>
+        </div>
+        {showStats && (
         <div className="bg-white rounded-xl shadow-md p-5 sm:p-6 mx-auto w-full max-w-4xl">
           <h3 className="text-xl font-bold mb-6 text-slate-900 border-b border-slate-200 pb-3">Statistics & Distribution</h3>
           
@@ -679,15 +695,15 @@ export default function GaltonBoard() {
               <div>
                 <h4 className="text-xs font-semibold text-slate-700 mb-3 uppercase tracking-wide">Bin Percentages</h4>
                 <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
-                  <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-4 xl:grid-cols-6 gap-2">
+                  <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-4 xl:grid-cols-6 gap-1.5">
                     {binTallies.map((count, i) => (
                       <div 
                         key={i} 
-                        className="bg-white rounded-md p-2 text-center border border-slate-200 hover:border-[#1e4e78] hover:shadow-sm transition-all"
+                        className="bg-white rounded-md p-1.5 text-center border border-slate-200 hover:border-[#1e4e78] hover:shadow-sm transition-all min-w-0 overflow-hidden"
                       >
-                        <div className="text-xs font-semibold text-slate-600 mb-0.5">Bin {i}</div>
-                        <div className="text-lg font-bold text-[#1e4e78] mb-0.5">{stats.percentages[i]}%</div>
-                        <div className="text-xs text-slate-500">{count} balls</div>
+                        <div className="text-[10px] font-semibold text-slate-600 mb-0.5">Col {i}</div>
+                        <div className="text-xs font-bold text-[#1e4e78] mb-0.5">{stats.percentages[i]}%</div>
+                        <div className="text-[10px] text-slate-500">{count} balls</div>
                       </div>
                     ))}
                   </div>
@@ -715,7 +731,7 @@ export default function GaltonBoard() {
                     <XAxis 
                       dataKey="bin" 
                       tick={{ fontSize: 11, fill: '#64748b' }} 
-                      label={{ value: "Bin", position: "insideBottom", offset: -5, style: { fontSize: 12, fill: '#475569' } }} 
+                      label={{ value: "Column (0 = far left)", position: "insideBottom", offset: -5, style: { fontSize: 12, fill: '#475569' } }} 
                     />
                     <YAxis 
                       allowDecimals={true}
@@ -739,7 +755,9 @@ export default function GaltonBoard() {
                         return value;
                       }}
                     />
-                    <Bar dataKey="percentage" fill="#0ea5e9" radius={[6, 6, 0, 0]} name="Percentage" />
+                    <Bar dataKey="percentage" fill="#0ea5e9" radius={[6, 6, 0, 0]} name="Percentage">
+                      <LabelList dataKey="barLabel" position="top" style={{ fontSize: 10 }} />
+                    </Bar>
                     {/* Standard deviation reference lines - labels only at top to avoid overlap with bin numbers */}
                     {stdDevPositions.map((sd) => {
                       return (
@@ -777,6 +795,7 @@ export default function GaltonBoard() {
             </div>
           </div>
         </div>
+        )}
       </div>
     </div>
   );
