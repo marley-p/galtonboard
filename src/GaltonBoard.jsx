@@ -33,6 +33,7 @@ export default function GaltonBoard() {
   const [running, setRunning] = useState(false);
   const [ballsDropped, setBallsDropped] = useState(0);
   const [showStats, setShowStats] = useState(true);
+  const [columnCapacity, setColumnCapacity] = useState(99); // Initial capacity: 99 balls per column
 
   // Geometry - dynamic sizing based on rows
   const spacing = 28; // fixed spacing
@@ -41,8 +42,9 @@ export default function GaltonBoard() {
   const topMargin = 40;
   const bottomMargin = 200; // Increased to accommodate bins
   const sidePadding = 40; // padding on left and right sides
-  const binHeight = 80; // Height of bins below the board
-  const gapBeforeHorizontalLine = 25; // Space between last peg row and horizontal divider
+  const baseBinHeight = 80; // Base height of bins below the board
+  const binHeight = useMemo(() => baseBinHeight * (columnCapacity / 99), [columnCapacity]); // Scale height with capacity
+  const gapBeforeHorizontalLine = 3; // Small gap between last peg row and column separators (like real Galton board)
   
   // Calculate dynamic width based on number of rows (bottom row has most pegs)
   const width = useMemo(() => {
@@ -66,6 +68,7 @@ export default function GaltonBoard() {
   // Calculate where the last peg row ends, then add gap before horizontal line
   const lastPegRowY = boardTop + (rows - 1) * spacing;
   const boardBottom = lastPegRowY + gapBeforeHorizontalLine;
+  const binBottom = useMemo(() => height - 30, [height]); // Leave space at bottom for tally numbers
 
   const canvasRef = useRef(null);
   const ballsRef = useRef([]);
@@ -77,10 +80,18 @@ export default function GaltonBoard() {
 
   const pegRows = useMemo(() => {
     const rowsArr = [];
+    // Standard triangular lattice: Row 0 has 1 peg, Row 1 has 2 pegs, Row N has N+1 pegs
     for (let r = 0; r < rows; r++) {
       const y = boardTop + r * spacing;
-      const count = r + 1; const rowWidth = (count - 1) * spacing; const startX = boardCenterX - rowWidth / 2;
-      const pegs = Array.from({ length: count }, (_, i) => ({ x: startX + i * spacing, y }));
+      const count = r + 1; // Row r has r+1 pegs
+      
+      // All rows use the same triangular pattern, centered at boardCenterX
+      const rowWidth = (count - 1) * spacing;
+      const startX = boardCenterX - rowWidth / 2;
+      const pegs = Array.from({ length: count }, (_, i) => ({
+        x: startX + i * spacing,
+        y
+      }));
       rowsArr.push(pegs);
     }
     return rowsArr;
@@ -88,22 +99,70 @@ export default function GaltonBoard() {
 
   const rowYs = useMemo(() => pegRows.map(r => r[0]?.y ?? boardTop), [pegRows, boardTop]);
 
-  const binCount = rows + 1;
+  const binCount = rows; // 12 columns (0-11) instead of 13
   const [binTallies, setBinTallies] = useState(() => Array(binCount).fill(0));
   useEffect(() => setBinTallies(Array(binCount).fill(0)), [binCount]);
+  
+  // Double column capacity when any column reaches the current capacity
+  useEffect(() => {
+    const maxCount = Math.max(...binTallies, 0);
+    if (maxCount >= columnCapacity) {
+      setColumnCapacity(prev => prev * 2);
+    }
+  }, [binTallies, columnCapacity]);
+  
   const totalBalls = binTallies.reduce((a, b) => a + b, 0);
 
   // Calculate bin centers and positions for visualization
-  // binCount = rows + 1, so we need to center rows + 1 bins
-  // Total width of bins = rows * spacing (since bins are between dividers)
+  // Columns are the spaces between walls (which are directly below bottom row pegs)
+  // If bottom row has N pegs, there are N walls, creating N+1 columns (left of first wall, between walls, right of last wall)
+  // But we use binCount = rows columns, so we use the spaces between the walls
   const binCenters = useMemo(() => {
-    const totalBinWidth = rows * spacing;
-    const startX = boardCenterX - totalBinWidth / 2 + spacing / 2; // First bin center
-    return Array.from({ length: binCount }, (_, i) => ({
-      x: startX + i * spacing,
-      binIndex: i
-    }));
-  }, [rows, spacing, boardCenterX, binCount]);
+    const bottomRow = pegRows[rows - 1];
+    if (!bottomRow || bottomRow.length === 0) {
+      // Fallback to calculated positions
+      const totalBinWidth = rows * spacing;
+      const startX = boardCenterX - totalBinWidth / 2 + spacing / 2;
+      return Array.from({ length: binCount }, (_, i) => ({
+        x: startX + i * spacing,
+        binIndex: i
+      }));
+    }
+    
+    // Walls are at each peg position in the bottom row
+    // For rows pegs, we have rows walls, which create rows bins (spaces between walls)
+    // Bins are the spaces BETWEEN consecutive walls:
+    // - Bin 0: between left edge and first wall
+    // - Bin 1 to binCount-2: between consecutive walls
+    // - Bin binCount-1: between last wall and right edge
+    const firstPegX = bottomRow[0].x;
+    const lastPegX = bottomRow[bottomRow.length - 1].x;
+    const leftEdge = firstPegX - spacing / 2;
+    const rightEdge = lastPegX + spacing / 2;
+    
+    return Array.from({ length: binCount }, (_, i) => {
+      let leftBoundary, rightBoundary;
+      if (i === 0) {
+        // First bin: between left edge and first wall (peg 0)
+        leftBoundary = leftEdge;
+        rightBoundary = bottomRow[0].x;
+      } else if (i === binCount - 1) {
+        // Last bin: between second-to-last wall and last wall (centered between last 2 walls)
+        leftBoundary = bottomRow[binCount - 2].x; // Second-to-last peg/wall
+        rightBoundary = bottomRow[binCount - 1].x; // Last peg/wall
+      } else {
+        // Middle bins: between wall i-1 and wall i (between pegs i-1 and i)
+        leftBoundary = bottomRow[i - 1].x;
+        rightBoundary = bottomRow[i].x;
+      }
+      // Perfectly center the bin center exactly in the middle between boundaries
+      const centerX = (leftBoundary + rightBoundary) / 2;
+      return {
+        x: centerX,
+        binIndex: i
+      };
+    });
+  }, [rows, spacing, boardCenterX, binCount, pegRows]);
 
   // Calculate statistics
   const stats = useMemo(() => {
@@ -210,7 +269,12 @@ export default function GaltonBoard() {
     }
   }, [dropIntervalMs, running]);
 
-  const reset = () => { ballsRef.current = []; setBinTallies(Array(binCount).fill(0)); setBallsDropped(0); };
+  const reset = () => { 
+    ballsRef.current = []; 
+    setBinTallies(Array(binCount).fill(0)); 
+    setBallsDropped(0);
+    setColumnCapacity(99); // Reset capacity to initial value
+  };
 
   const drawPegs = (ctx) => {
     ctx.fillStyle = "#94a3b8";
@@ -218,34 +282,46 @@ export default function GaltonBoard() {
   };
   
   const drawBins = (ctx) => {
-    const binTop = boardBottom + 10;
-    const binBottom = height - 20;
+    const binTop = boardBottom + 2; // Start columns just below the pegs (small gap like real board)
     const maxCount = Math.max(...binTallies, 1);
+    // Use columnCapacity as the scale reference for visual representation
+    const scaleReference = Math.max(maxCount, columnCapacity);
     
     ctx.strokeStyle = "#cbd5e1";
     ctx.lineWidth = 1;
     
-    // Draw vertical dividers - we need binCount dividers (leftmost + dividers between bins)
-    // Calculate the leftmost divider position to match the board structure
-    const totalBinWidth = rows * spacing;
-    const leftmostDividerX = boardCenterX - totalBinWidth / 2;
-    
-    // Draw dividers: binCount+1 lines to define left edge, between bins, and right edge
-    for (let i = 0; i <= binCount; i++) {
-      const dividerX = leftmostDividerX + i * spacing;
-      ctx.beginPath();
-      ctx.moveTo(dividerX, binTop);
-      ctx.lineTo(dividerX, binBottom);
-      ctx.stroke();
+    // Draw vertical walls directly below each peg in the bottom row
+    // Anchor Rule: Walls must strictly align with pegs of the final row
+    const bottomRow = pegRows[rows - 1];
+    if (bottomRow && bottomRow.length > 0) {
+      // Calculate the highest point any column reaches for wall extension
+      // Scale based on capacity: if maxCount is at capacity, use full available height
+      const availableHeight = binBottom - binTop;
+      const maxBarHeight = scaleReference > 0 ? (maxCount / scaleReference) * availableHeight : 0;
+      const wallTop = Math.max(boardBottom, binBottom - maxBarHeight);
+      
+      // Draw walls at each peg position only (no outer walls)
+      bottomRow.forEach((peg) => {
+        const wallX = peg.x; // Wall x-position = peg x-position exactly (no offsets)
+        const wallStartY = peg.y; // Wall starts at the peg's y position
+        ctx.beginPath();
+        ctx.moveTo(wallX, wallStartY);
+        ctx.lineTo(wallX, binBottom);
+        ctx.stroke();
+      });
     }
 
     // Draw accumulated balls in bins (simplified representation)
+    // Columns can extend upward when they fill
     ctx.fillStyle = "#0ea5e9";
     binCenters.forEach((bin, i) => {
       const count = binTallies[i];
-      if (count > 0 && maxCount > 0) {
-        const barHeight = (count / maxCount) * (binBottom - binTop);
-        const barTop = binBottom - barHeight;
+      if (count > 0 && scaleReference > 0) {
+        // Calculate bar height - scale based on capacity
+        const availableHeight = binBottom - binTop;
+        const barHeight = (count / scaleReference) * availableHeight;
+        // Allow bar to extend upward if needed (but don't go above boardBottom)
+        const barTop = Math.max(boardBottom - barHeight, binBottom - barHeight);
         const barWidth = spacing * 0.7;
         
         // Draw a filled rectangle representing the balls
@@ -270,6 +346,20 @@ export default function GaltonBoard() {
         }
       }
     });
+
+    // Draw tally numbers at the bottom of each column - perfectly centered
+    // Skip the far left bin (i === 0) as requested
+    ctx.fillStyle = "#475569";
+    ctx.font = "12px Inter, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    // Only draw for bins 1 through binCount-1 (skip bin 0, the far left one)
+    for (let i = 1; i < binCount && i < binCenters.length && i < binTallies.length; i++) {
+      const count = binTallies[i];
+      const bin = binCenters[i];
+      const textY = binBottom + 5; // Position text just below the column
+      ctx.fillText(count.toString(), bin.x, textY);
+    }
   };
   
   const drawGround = (ctx) => {
@@ -284,12 +374,21 @@ export default function GaltonBoard() {
   };
 
   const G = 1200; // Gravity acceleration (pixels per second squared)
-  const BOUNCE_COEFFICIENT = 0.618; // Coefficient of restitution (golden ratio)
-  const AIR_DAMPING = 0.001; // Air resistance (horizontal only)
-  const MIN_BOUNCE_VELOCITY = 30; // Minimum bounce velocity to ensure ball continues moving
+  const BOUNCE_VY = 120; // Bounce velocity after hitting a peg
+  const AIR_DAMPING = 0.002; // Air resistance (horizontal only)
 
-  useEffect(() => { ballsRef.current = []; setBinTallies(Array(rows + 1).fill(0)); setBallsDropped(0); }, [rows]);
-  useEffect(() => { ballsRef.current = []; setBinTallies(Array(rows + 1).fill(0)); setBallsDropped(0); }, [bias]);
+  useEffect(() => { 
+    ballsRef.current = []; 
+    setBinTallies(Array(rows + 1).fill(0)); 
+    setBallsDropped(0);
+    setColumnCapacity(99); // Reset capacity when rows change
+  }, [rows]);
+  useEffect(() => { 
+    ballsRef.current = []; 
+    setBinTallies(Array(rows + 1).fill(0)); 
+    setBallsDropped(0);
+    setColumnCapacity(99); // Reset capacity when bias changes
+  }, [bias]);
 
   // Update canvas dimensions when height changes
   useEffect(() => {
@@ -316,10 +415,9 @@ export default function GaltonBoard() {
 
       ballsRef.current.forEach((b) => {
         if (b.done) return;
-        // Apply gravity (only when falling, not during bounce upward)
         b.vy += G * dt;
-        // Apply air damping to horizontal velocity only
         b.vx *= (1 - AIR_DAMPING);
+        b.vy *= (1 - AIR_DAMPING * 0.5);
 
         if (b.txActive) {
           const u = clamp((now - b.txT0) / 1000 / b.txDur, 0, 1);
@@ -332,81 +430,76 @@ export default function GaltonBoard() {
 
         b.y += b.vy * dt;
 
-        // Check for actual peg collision - ball must be moving downward
-        // Check collisions continuously, even during horizontal movement
-        if (b.row < b.rows && b.vy > 0) {
-          const currentRow = pegRows[b.row];
-          if (currentRow && currentRow.length > 0) {
-            // Check collision with each peg in the current row
-            for (const peg of currentRow) {
-              const dx = b.x - peg.x;
-              const dy = b.y - peg.y;
-              const distance = Math.sqrt(dx * dx + dy * dy);
-              const collisionDistance = pegRadius + b.r;
-              
-              // Ball is colliding with this peg
-              // Allow collision even during horizontal movement, but only once per row
-              if (distance <= collisionDistance) {
-                // Determine probabilistic direction (left or right)
-                const goRight = b.rng() < b.pRight ? 1 : -1;
-                if (goRight > 0) b.rights += 1;
-                
-                // Calculate collision normal (vector from peg center to ball center)
-                const _normalX = dx / distance;
-                const _normalY = dy / distance;
-                
-                // Calculate incoming velocity
-                const _incomingVx = b.vx || 0;
-                const incomingVy = b.vy;
-                const incomingSpeed = Math.abs(incomingVy);
-                
-                // Apply realistic bounce physics with coefficient of restitution
-                // Bounce upward with reduced velocity
-                b.vy = -incomingSpeed * BOUNCE_COEFFICIENT;
-                
-                // Ensure minimum bounce velocity
-                if (Math.abs(b.vy) < MIN_BOUNCE_VELOCITY) {
-                  b.vy = -MIN_BOUNCE_VELOCITY;
-                }
-                
-                // Snap ball X position to peg X position for proper alignment
-                b.x = peg.x;
-                
-                // Calculate target position for the next row
-                // Move half spacing left or right from the peg position
-                const nextRow = b.row + 1;
-                const nextRowWidth = nextRow * spacing;
-                const leftBound = boardCenterX - nextRowWidth / 2;
-                const rightBound = boardCenterX + nextRowWidth / 2;
-                const targetX = clamp(peg.x + goRight * (spacing / 2), leftBound + b.r, rightBound - b.r);
-                
-                // Use horizontal tweening to guide ball toward next row's pegs
-                // This ensures proper alignment while maintaining realistic vertical bounce
-                b.txStart = b.x; 
-                b.txTarget = targetX; 
-                b.txT0 = now; 
-                b.txDur = 0.14; 
-                b.txActive = true;
-                b.vx = 0; // Clear horizontal velocity, tweening handles it
-                
-                // Increment row to track progress
-                b.row += 1;
-                break; // Only collide with one peg per frame
-              }
-            }
-          }
+        // Check for peg collision - when ball reaches a row
+        if (b.row < b.rows && b.y >= b.rowYs[b.row]) {
+          const goRight = b.rng() < b.pRight ? 1 : -1;
+          if (goRight > 0) b.rights += 1;
+          b.vy = -Math.abs(BOUNCE_VY);
+          
+          // Calculate target position for the next row
+          const nextRow = b.row + 1;
+          const nextRowCount = nextRow + 1;
+          const nextRowWidth = (nextRowCount - 1) * spacing;
+          const nextRowStartX = boardCenterX - nextRowWidth / 2;
+          const leftBound = nextRowStartX + b.r;
+          const rightBound = nextRowStartX + nextRowWidth - b.r;
+          const targetX = clamp(b.x + goRight * (b.spacing / 2), leftBound, rightBound);
+          
+          b.txStart = b.x; 
+          b.txTarget = targetX; 
+          b.txT0 = now; 
+          b.txDur = 0.14; 
+          b.txActive = true;
+          b.vx = 0; 
+          b.row += 1;
         }
 
-        // Bottom row has 'rows' pegs, so width is (rows - 1) * spacing
-        const bottomRowWidth = (rows - 1) * spacing;
-        const leftWall = boardCenterX - bottomRowWidth / 2 - spacing / 2 + b.r;
-        const rightWall = boardCenterX + bottomRowWidth / 2 + spacing / 2 - b.r;
-        if (b.x < leftWall) { b.x = leftWall; b.vx = Math.abs(b.vx) * 0.6; }
-        if (b.x > rightWall) { b.x = rightWall; b.vx = -Math.abs(b.vx) * 0.6; }
+        // Wall boundaries
+        const bottomRow = pegRows[rows - 1];
+        if (bottomRow && bottomRow.length > 0) {
+          const firstPegX = bottomRow[0].x;
+          const lastPegX = bottomRow[bottomRow.length - 1].x;
+          const leftWallX = firstPegX - spacing / 2;
+          const rightWallX = lastPegX + spacing / 2;
+          const leftWall = leftWallX + b.r;
+          const rightWall = rightWallX - b.r;
+          if (b.x < leftWall) { b.x = leftWall; b.vx = Math.abs(b.vx) * 0.6; }
+          if (b.x > rightWall) { b.x = rightWall; b.vx = -Math.abs(b.vx) * 0.6; }
+        } else {
+          // Fallback
+          const totalBinWidth = rows * spacing;
+          const leftmostDividerX = boardCenterX - totalBinWidth / 2;
+          const leftWall = leftmostDividerX + b.r;
+          const rightWall = leftmostDividerX + binCount * spacing - b.r;
+          if (b.x < leftWall) { b.x = leftWall; b.vx = Math.abs(b.vx) * 0.6; }
+          if (b.x > rightWall) { b.x = rightWall; b.vx = -Math.abs(b.vx) * 0.6; }
+        }
 
         if (b.y - b.r >= boardBottom) {
-          const idx = clamp(b.rights, 0, rows);
-          setBinTallies((prev) => { const next = prev.slice(); next[idx] += 1; return next; });
+          // Determine column based on x position
+          const bottomRow = pegRows[rows - 1];
+          if (bottomRow && bottomRow.length > 0) {
+            const firstPegX = bottomRow[0].x;
+            const lastPegX = bottomRow[bottomRow.length - 1].x;
+            let columnIndex = 0;
+            if (b.x < firstPegX) {
+              columnIndex = 0;
+            } else if (b.x >= lastPegX) {
+              columnIndex = binCount - 1;
+            } else {
+              for (let i = 0; i < bottomRow.length - 1; i++) {
+                if (b.x >= bottomRow[i].x && b.x < bottomRow[i + 1].x) {
+                  columnIndex = i + 1;
+                  break;
+                }
+              }
+            }
+            const idx = clamp(columnIndex, 0, binCount - 1);
+            setBinTallies((prev) => { const next = prev.slice(); next[idx] += 1; return next; });
+          } else {
+            const idx = clamp(b.rights, 0, binCount - 1);
+            setBinTallies((prev) => { const next = prev.slice(); next[idx] += 1; return next; });
+          }
           b.done = true;
         }
       });
@@ -415,7 +508,6 @@ export default function GaltonBoard() {
 
       ctx.clearRect(0, 0, width, height);
       drawPegs(ctx);
-      drawGround(ctx);
       drawBins(ctx);
       ctx.fillStyle = "#0ea5e9";
       ballsRef.current.forEach((b) => { ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2); ctx.fill(); });
@@ -425,7 +517,7 @@ export default function GaltonBoard() {
 
     rafId = requestAnimationFrame(step);
     return () => cancelAnimationFrame(rafId);
-  }, [width, height, rows, spacing, boardCenterX, boardBottom, rowYs, G, BOUNCE_COEFFICIENT, MIN_BOUNCE_VELOCITY, pegRows, binCenters, binTallies, binHeight]);
+  }, [width, height, rows, spacing, boardCenterX, boardBottom, rowYs, G, BOUNCE_VY, AIR_DAMPING, pegRows, binCenters, binTallies, binHeight, binBottom, binCount]);
 
   // Calculate standard deviation positions
   const stdDevPositions = useMemo(() => {
