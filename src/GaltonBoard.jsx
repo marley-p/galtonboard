@@ -623,7 +623,7 @@ export default function GaltonBoard() {
   }, [maxPercentage]);
 
   return (
-    <div className="w-full min-h-screen bg-slate-50 flex items-start justify-center pt-4 pb-8">
+    <div className="w-full min-h-screen bg-slate-50 flex items-start justify-center pt-8 pb-8">
       <div className="w-full max-w-7xl mx-auto px-4 box-border text-slate-900 flex flex-col gap-5">
         {/* Controls at Top */}
         <div className="bg-white rounded-xl shadow-md p-5 sm:p-6 mx-auto w-full max-w-4xl">
