@@ -33,7 +33,7 @@ export default function GaltonBoard() {
   const [running, setRunning] = useState(false);
   const [ballsDropped, setBallsDropped] = useState(0);
   const [showStats, setShowStats] = useState(true);
-  const [columnCapacity, setColumnCapacity] = useState(99); // Initial capacity: 99 balls per column
+  const [dropCount, setDropCount] = useState(1); // Number of balls to drop at once
 
   // Geometry - dynamic sizing based on rows
   const spacing = 28; // fixed spacing
@@ -43,8 +43,32 @@ export default function GaltonBoard() {
   const bottomMargin = 200; // Increased to accommodate bins
   const sidePadding = 40; // padding on left and right sides
   const baseBinHeight = 80; // Base height of bins below the board
-  const binHeight = useMemo(() => baseBinHeight * (columnCapacity / 99), [columnCapacity]); // Scale height with capacity
   const gapBeforeHorizontalLine = 3; // Small gap between last peg row and column separators (like real Galton board)
+
+  const canvasRef = useRef(null);
+  const ballsRef = useRef([]);
+  const rngRef = useRef(mulberry32(12345)); // fixed seed
+  const intervalRef = useRef(null);
+  const launchBallRef = useRef(null);
+
+  const pRight = clamp(0.5 + bias, 0, 1);
+
+  const binCount = rows + 1; // N+1 columns for N rows (column i = went right i times)
+  const [binTallies, setBinTallies] = useState(() => Array(binCount).fill(0));
+  useEffect(() => setBinTallies(Array(binCount).fill(0)), [binCount]);
+  
+  const totalBalls = binTallies.reduce((a, b) => a + b, 0);
+  
+  // Compute max count for dynamic bin height scaling
+  const maxBinCount = useMemo(() => Math.max(...binTallies, 1), [binTallies]);
+  
+  // Dynamic bin height: grows smoothly based on max count
+  // Start with baseBinHeight, grow as needed (2 pixels per ball, minimum baseBinHeight)
+  const binHeight = useMemo(() => {
+    const minHeight = baseBinHeight;
+    const heightNeeded = maxBinCount * 2; // 2 pixels per ball for visibility
+    return Math.max(minHeight, heightNeeded);
+  }, [maxBinCount, baseBinHeight]);
   
   // Calculate dynamic width based on number of rows (bottom row has most pegs)
   const width = useMemo(() => {
@@ -70,14 +94,6 @@ export default function GaltonBoard() {
   const boardBottom = lastPegRowY + gapBeforeHorizontalLine;
   const binBottom = useMemo(() => height - 30, [height]); // Leave space at bottom for tally numbers
 
-  const canvasRef = useRef(null);
-  const ballsRef = useRef([]);
-  const rngRef = useRef(mulberry32(12345)); // fixed seed
-  const intervalRef = useRef(null);
-  const launchBallRef = useRef(null);
-
-  const pRight = clamp(0.5 + bias, 0, 1);
-
   const pegRows = useMemo(() => {
     const rowsArr = [];
     // Standard triangular lattice: Row 0 has 1 peg, Row 1 has 2 pegs, Row N has N+1 pegs
@@ -98,20 +114,6 @@ export default function GaltonBoard() {
   }, [rows, spacing, boardTop, boardCenterX]);
 
   const rowYs = useMemo(() => pegRows.map(r => r[0]?.y ?? boardTop), [pegRows, boardTop]);
-
-  const binCount = rows; // 12 columns (0-11) instead of 13
-  const [binTallies, setBinTallies] = useState(() => Array(binCount).fill(0));
-  useEffect(() => setBinTallies(Array(binCount).fill(0)), [binCount]);
-  
-  // Double column capacity when any column reaches the current capacity
-  useEffect(() => {
-    const maxCount = Math.max(...binTallies, 0);
-    if (maxCount >= columnCapacity) {
-      setColumnCapacity(prev => prev * 2);
-    }
-  }, [binTallies, columnCapacity]);
-  
-  const totalBalls = binTallies.reduce((a, b) => a + b, 0);
 
   // Calculate bin centers and positions for visualization
   // Columns are the spaces between walls (which are directly below bottom row pegs)
@@ -137,21 +139,26 @@ export default function GaltonBoard() {
     // - Bin binCount-1: between last wall and right edge
     const firstPegX = bottomRow[0].x;
     const lastPegX = bottomRow[bottomRow.length - 1].x;
-    const leftEdge = firstPegX - spacing / 2;
-    const rightEdge = lastPegX + spacing / 2;
+    // Make outer walls full spacing away so all bins have equal width
+    const leftEdge = firstPegX - spacing;
+    const rightEdge = lastPegX + spacing;
     
+    // With rows pegs in bottom row, we have rows+1 bins (binCount = rows+1)
+    // Bin 0: between left outer wall and first peg
+    // Bin 1 to rows-1: between consecutive pegs
+    // Bin rows: between last peg and right outer wall
     return Array.from({ length: binCount }, (_, i) => {
       let leftBoundary, rightBoundary;
       if (i === 0) {
-        // First bin: between left edge and first wall (peg 0)
+        // First bin: between left outer wall and first peg wall
         leftBoundary = leftEdge;
         rightBoundary = bottomRow[0].x;
       } else if (i === binCount - 1) {
-        // Last bin: between second-to-last wall and last wall (centered between last 2 walls)
-        leftBoundary = bottomRow[binCount - 2].x; // Second-to-last peg/wall
-        rightBoundary = bottomRow[binCount - 1].x; // Last peg/wall
+        // Last bin: between last peg wall and right outer wall
+        leftBoundary = bottomRow[bottomRow.length - 1].x;
+        rightBoundary = rightEdge;
       } else {
-        // Middle bins: between wall i-1 and wall i (between pegs i-1 and i)
+        // Middle bins: between peg i-1 and peg i
         leftBoundary = bottomRow[i - 1].x;
         rightBoundary = bottomRow[i].x;
       }
@@ -217,6 +224,17 @@ export default function GaltonBoard() {
     setBallsDropped((d) => d + 1);
   }, [boardCenterX, boardTop, spacing, ballRadius, rows, pRight, rowYs]);
 
+  // Drop N balls at once
+  const dropNBalls = useCallback((n) => {
+    const count = Math.max(1, Math.min(1000, n)); // Limit to 1-1000
+    for (let i = 0; i < count; i++) {
+      const x0 = boardCenterX;
+      const y0 = boardTop - spacing * 0.8;
+      ballsRef.current.push(new QBall({ x0, y0, r: ballRadius, rows, spacing, pRight, rng: rngRef.current, rowYs }));
+    }
+    setBallsDropped((d) => d + count);
+  }, [boardCenterX, boardTop, spacing, ballRadius, rows, pRight, rowYs]);
+
   // Update the ref whenever launchBall changes
   useEffect(() => {
     launchBallRef.current = launchBall;
@@ -273,7 +291,6 @@ export default function GaltonBoard() {
     ballsRef.current = []; 
     setBinTallies(Array(binCount).fill(0)); 
     setBallsDropped(0);
-    setColumnCapacity(99); // Reset capacity to initial value
   };
 
   const drawPegs = (ctx) => {
@@ -284,8 +301,6 @@ export default function GaltonBoard() {
   const drawBins = (ctx) => {
     const binTop = boardBottom + 2; // Start columns just below the pegs (small gap like real board)
     const maxCount = Math.max(...binTallies, 1);
-    // Use columnCapacity as the scale reference for visual representation
-    const scaleReference = Math.max(maxCount, columnCapacity);
     
     ctx.strokeStyle = "#cbd5e1";
     ctx.lineWidth = 1;
@@ -294,13 +309,20 @@ export default function GaltonBoard() {
     // Anchor Rule: Walls must strictly align with pegs of the final row
     const bottomRow = pegRows[rows - 1];
     if (bottomRow && bottomRow.length > 0) {
-      // Calculate the highest point any column reaches for wall extension
-      // Scale based on capacity: if maxCount is at capacity, use full available height
-      const availableHeight = binBottom - binTop;
-      const maxBarHeight = scaleReference > 0 ? (maxCount / scaleReference) * availableHeight : 0;
-      const wallTop = Math.max(boardBottom, binBottom - maxBarHeight);
       
-      // Draw walls at each peg position only (no outer walls)
+      const firstPegX = bottomRow[0].x;
+      const lastPegX = bottomRow[bottomRow.length - 1].x;
+      // Make outer walls full spacing away so all bins have equal width
+      const leftWallX = firstPegX - spacing;
+      const rightWallX = lastPegX + spacing;
+      
+      // Draw outer left wall
+      ctx.beginPath();
+      ctx.moveTo(leftWallX, boardBottom);
+      ctx.lineTo(leftWallX, binBottom);
+      ctx.stroke();
+      
+      // Draw walls at each peg position
       bottomRow.forEach((peg) => {
         const wallX = peg.x; // Wall x-position = peg x-position exactly (no offsets)
         const wallStartY = peg.y; // Wall starts at the peg's y position
@@ -309,17 +331,23 @@ export default function GaltonBoard() {
         ctx.lineTo(wallX, binBottom);
         ctx.stroke();
       });
+      
+      // Draw outer right wall
+      ctx.beginPath();
+      ctx.moveTo(rightWallX, boardBottom);
+      ctx.lineTo(rightWallX, binBottom);
+      ctx.stroke();
     }
 
     // Draw accumulated balls in bins (simplified representation)
-    // Columns can extend upward when they fill
+    // Bars grow dynamically - tallest bar uses full available height
     ctx.fillStyle = "#0ea5e9";
     binCenters.forEach((bin, i) => {
       const count = binTallies[i];
-      if (count > 0 && scaleReference > 0) {
-        // Calculate bar height - scale based on capacity
+      if (count > 0 && maxCount > 0) {
+        // Calculate bar height - scale based on max count (tallest bar fills available space)
         const availableHeight = binBottom - binTop;
-        const barHeight = (count / scaleReference) * availableHeight;
+        const barHeight = (count / maxCount) * availableHeight;
         // Allow bar to extend upward if needed (but don't go above boardBottom)
         const barTop = Math.max(boardBottom - barHeight, binBottom - barHeight);
         const barWidth = spacing * 0.7;
@@ -348,13 +376,12 @@ export default function GaltonBoard() {
     });
 
     // Draw tally numbers at the bottom of each column - perfectly centered
-    // Skip the far left bin (i === 0) as requested
     ctx.fillStyle = "#475569";
     ctx.font = "12px Inter, sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
-    // Only draw for bins 1 through binCount-1 (skip bin 0, the far left one)
-    for (let i = 1; i < binCount && i < binCenters.length && i < binTallies.length; i++) {
+    // Draw for all bins (0 through binCount-1)
+    for (let i = 0; i < binCount && i < binCenters.length && i < binTallies.length; i++) {
       const count = binTallies[i];
       const bin = binCenters[i];
       const textY = binBottom + 5; // Position text just below the column
@@ -381,13 +408,11 @@ export default function GaltonBoard() {
     ballsRef.current = []; 
     setBinTallies(Array(rows + 1).fill(0)); 
     setBallsDropped(0);
-    setColumnCapacity(99); // Reset capacity when rows change
   }, [rows]);
   useEffect(() => { 
     ballsRef.current = []; 
     setBinTallies(Array(rows + 1).fill(0)); 
     setBallsDropped(0);
-    setColumnCapacity(99); // Reset capacity when bias changes
   }, [bias]);
 
   // Update canvas dimensions when height changes
@@ -634,22 +659,33 @@ export default function GaltonBoard() {
                 <strong>Balls dropped:</strong> {ballsDropped} &nbsp;|&nbsp; <strong>Tallied:</strong> {totalBalls}
               </span>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-2">
               <button 
                 onClick={() => setRunning((r) => !r)} 
-                className="px-5 py-2 rounded-lg border-0 bg-[#1e4e78] hover:bg-[#1a4266] text-white cursor-pointer font-medium transition-all shadow-sm hover:shadow active:scale-95 text-sm"
+                className="px-5 py-2 rounded-lg border-0 bg-[#1e4e78] hover:bg-[#1a4266] text-white cursor-pointer font-medium transition-all shadow-sm hover:shadow active:scale-95 text-sm whitespace-nowrap"
               >
                 {running ? "⏸ Stop" : "▶ Start"}
               </button>
-              <button 
-                onClick={launchBall} 
-                className="px-5 py-2 rounded-lg border-0 bg-[#1e4e78] hover:bg-[#1a4266] text-white cursor-pointer font-medium transition-all shadow-sm hover:shadow active:scale-95 text-sm"
-              >
-                Drop 1 Ball
-              </button>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-slate-700">Drop</span>
+                <input 
+                  type="number" 
+                  min={1} 
+                  max={1000} 
+                  value={dropCount} 
+                  onChange={(e) => setDropCount(Math.max(1, parseInt(e.target.value) || 1))}
+                  className="w-16 px-2 py-1.5 rounded-lg border border-slate-300 text-center text-sm font-medium"
+                />
+                <button 
+                  onClick={() => dropNBalls(dropCount)} 
+                  className="px-4 py-2 rounded-lg border-0 bg-[#1e4e78] hover:bg-[#1a4266] text-white cursor-pointer font-medium transition-all shadow-sm hover:shadow active:scale-95 text-sm whitespace-nowrap"
+                >
+                  Ball{dropCount > 1 ? 's' : ''}
+                </button>
+              </div>
               <button 
                 onClick={reset} 
-                className="px-5 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-900 cursor-pointer font-medium transition-all shadow-sm hover:shadow active:scale-95 text-sm"
+                className="px-5 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-900 cursor-pointer font-medium transition-all shadow-sm hover:shadow active:scale-95 text-sm whitespace-nowrap"
               >
                 Reset
               </button>
@@ -684,15 +720,15 @@ export default function GaltonBoard() {
               <input 
                 type="range" 
                 step={0.01} 
-                min={-0.25} 
-                max={0.25} 
+                min={-0.5} 
+                max={0.5} 
                 value={bias} 
                 onChange={(e) => { setBias(parseFloat(e.target.value)); }}
                 className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-[#1e4e78]"
               />
               <div className="flex justify-between text-xs text-slate-500 mt-1">
-                <span>75% / 25%</span>
-                <span>25% / 75%</span>
+                <span>100% / 0%</span>
+                <span>0% / 100%</span>
               </div>
             </div>
             
