@@ -42,7 +42,7 @@ export default function GaltonBoard() {
   const topMargin = 40;
   const bottomMargin = 200; // Increased to accommodate bins
   const sidePadding = 40; // padding on left and right sides
-  const baseBinHeight = 80; // Base height of bins below the board
+  const binHeight = 120; // Fixed height for bins (shorter and consistent)
   const gapBeforeHorizontalLine = 3; // Small gap between last peg row and column separators (like real Galton board)
 
   const canvasRef = useRef(null);
@@ -50,6 +50,7 @@ export default function GaltonBoard() {
   const rngRef = useRef(mulberry32(12345)); // fixed seed
   const intervalRef = useRef(null);
   const launchBallRef = useRef(null);
+  const dropNBallsIntervalRef = useRef(null); // For dropping N balls at intervals
 
   const pRight = clamp(0.5 + bias, 0, 1);
 
@@ -59,16 +60,8 @@ export default function GaltonBoard() {
   
   const totalBalls = binTallies.reduce((a, b) => a + b, 0);
   
-  // Compute max count for dynamic bin height scaling
+  // Compute max count for bar scaling (tallest bar fills available space)
   const maxBinCount = useMemo(() => Math.max(...binTallies, 1), [binTallies]);
-  
-  // Dynamic bin height: grows smoothly based on max count
-  // Start with baseBinHeight, grow as needed (2 pixels per ball, minimum baseBinHeight)
-  const binHeight = useMemo(() => {
-    const minHeight = baseBinHeight;
-    const heightNeeded = maxBinCount * 2; // 2 pixels per ball for visibility
-    return Math.max(minHeight, heightNeeded);
-  }, [maxBinCount, baseBinHeight]);
   
   // Calculate dynamic width based on number of rows (bottom row has most pegs)
   const width = useMemo(() => {
@@ -92,7 +85,7 @@ export default function GaltonBoard() {
   // Calculate where the last peg row ends, then add gap before horizontal line
   const lastPegRowY = boardTop + (rows - 1) * spacing;
   const boardBottom = lastPegRowY + gapBeforeHorizontalLine;
-  const binBottom = useMemo(() => height - 30, [height]); // Leave space at bottom for tally numbers
+  const binBottom = useMemo(() => height - 40, [height]); // Leave space at bottom for larger tally numbers
 
   const pegRows = useMemo(() => {
     const rowsArr = [];
@@ -224,16 +217,39 @@ export default function GaltonBoard() {
     setBallsDropped((d) => d + 1);
   }, [boardCenterX, boardTop, spacing, ballRadius, rows, pRight, rowYs]);
 
-  // Drop N balls at once
+  // Drop N balls at the current drop interval (not all at once)
   const dropNBalls = useCallback((n) => {
     const count = Math.max(1, Math.min(1000, n)); // Limit to 1-1000
-    for (let i = 0; i < count; i++) {
-      const x0 = boardCenterX;
-      const y0 = boardTop - spacing * 0.8;
-      ballsRef.current.push(new QBall({ x0, y0, r: ballRadius, rows, spacing, pRight, rng: rngRef.current, rowYs }));
+    let dropped = 0;
+    
+    // Clear any existing dropNBalls interval
+    if (dropNBallsIntervalRef.current) {
+      clearInterval(dropNBallsIntervalRef.current);
     }
-    setBallsDropped((d) => d + count);
-  }, [boardCenterX, boardTop, spacing, ballRadius, rows, pRight, rowYs]);
+    
+    // Drop first ball immediately
+    const x0 = boardCenterX;
+    const y0 = boardTop - spacing * 0.8;
+    ballsRef.current.push(new QBall({ x0, y0, r: ballRadius, rows, spacing, pRight, rng: rngRef.current, rowYs }));
+    setBallsDropped((d) => d + 1);
+    dropped++;
+    
+    // If more balls to drop, set up interval
+    if (dropped < count) {
+      dropNBallsIntervalRef.current = setInterval(() => {
+        const x0 = boardCenterX;
+        const y0 = boardTop - spacing * 0.8;
+        ballsRef.current.push(new QBall({ x0, y0, r: ballRadius, rows, spacing, pRight, rng: rngRef.current, rowYs }));
+        setBallsDropped((d) => d + 1);
+        dropped++;
+        
+        if (dropped >= count) {
+          clearInterval(dropNBallsIntervalRef.current);
+          dropNBallsIntervalRef.current = null;
+        }
+      }, Math.max(40, dropIntervalMs));
+    }
+  }, [boardCenterX, boardTop, spacing, ballRadius, rows, pRight, rowYs, dropIntervalMs]);
 
   // Update the ref whenever launchBall changes
   useEffect(() => {
@@ -288,6 +304,11 @@ export default function GaltonBoard() {
   }, [dropIntervalMs, running]);
 
   const reset = () => { 
+    // Clear any pending dropNBalls interval
+    if (dropNBallsIntervalRef.current) {
+      clearInterval(dropNBallsIntervalRef.current);
+      dropNBallsIntervalRef.current = null;
+    }
     ballsRef.current = []; 
     setBinTallies(Array(binCount).fill(0)); 
     setBallsDropped(0);
@@ -375,16 +396,16 @@ export default function GaltonBoard() {
       }
     });
 
-    // Draw tally numbers at the bottom of each column - perfectly centered
-    ctx.fillStyle = "#475569";
-    ctx.font = "12px Inter, sans-serif";
+    // Draw tally numbers at the bottom of each column - perfectly centered, larger font
+    ctx.fillStyle = "#1e293b";
+    ctx.font = "bold 16px Inter, sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
     // Draw for all bins (0 through binCount-1)
     for (let i = 0; i < binCount && i < binCenters.length && i < binTallies.length; i++) {
       const count = binTallies[i];
       const bin = binCenters[i];
-      const textY = binBottom + 5; // Position text just below the column
+      const textY = binBottom + 8; // Position text just below the column
       ctx.fillText(count.toString(), bin.x, textY);
     }
   };
@@ -767,15 +788,16 @@ export default function GaltonBoard() {
 
         {/* Toggle and Statistics and Distribution at Bottom - Full Width */}
         <div className="mx-auto w-full max-w-4xl flex items-center gap-2 mb-2">
-          <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-700">
-            <input 
-              type="checkbox" 
-              checked={showStats} 
-              onChange={(e) => setShowStats(e.target.checked)}
-              className="rounded border-slate-300 accent-[#1e4e78]"
-            />
+          <button
+            type="button"
+            onClick={() => setShowStats((prev) => !prev)}
+            className="flex items-center gap-3 cursor-pointer text-base text-slate-700 px-4 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 active:bg-slate-100 transition-colors"
+          >
+            <span className={`w-5 h-5 rounded border-2 flex items-center justify-center ${showStats ? 'bg-[#1e4e78] border-[#1e4e78]' : 'border-slate-400'}`}>
+              {showStats && <span className="text-white text-sm font-bold">✓</span>}
+            </span>
             Show Statistics & Distribution
-          </label>
+          </button>
         </div>
         {showStats && (
         <div className="bg-white rounded-xl shadow-md p-5 sm:p-6 mx-auto w-full max-w-4xl">
