@@ -775,7 +775,7 @@ export default function GaltonBoard() {
         </div>
 
         {/* Main Board Card - Centered */}
-        <div className="bg-white rounded-xl shadow-md p-4 sm:p-5 mx-auto w-full max-w-5xl">
+        <div className="bg-white rounded-xl shadow-md p-4 sm:p-5 mx-auto w-full max-w-4xl">
           <div className="relative w-full max-h-[70vh] overflow-x-auto overflow-y-hidden border-2 border-[#f2f2f2] rounded-lg bg-[#f7f7f7] flex items-start justify-center">
             <canvas 
               ref={canvasRef} 
