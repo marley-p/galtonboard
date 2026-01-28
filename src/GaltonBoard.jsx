@@ -396,9 +396,9 @@ export default function GaltonBoard() {
       }
     });
 
-    // Draw tally numbers at the bottom of each column - perfectly centered, larger font
+    // Draw tally numbers at the bottom of each column - perfectly centered
     ctx.fillStyle = "#1e293b";
-    ctx.font = "bold 16px Inter, sans-serif";
+    ctx.font = "500 14px Inter, sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
     // Draw for all bins (0 through binCount-1)
