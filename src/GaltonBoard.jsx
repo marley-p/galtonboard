@@ -42,7 +42,7 @@ export default function GaltonBoard() {
   const topMargin = 40;
   const bottomMargin = 200; // Increased to accommodate bins
   const sidePadding = 40; // padding on left and right sides
-  const binHeight = 60; // Fixed height for bins (shorter and consistent)
+  const binHeight = 30; // Fixed height for bins (very short)
   const gapBeforeHorizontalLine = 3; // Small gap between last peg row and column separators (like real Galton board)
 
   const canvasRef = useRef(null);
