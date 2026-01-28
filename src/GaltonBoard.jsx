@@ -36,12 +36,12 @@ export default function GaltonBoard() {
   const [dropCount, setDropCount] = useState(1); // Number of balls to drop at once
 
   // Geometry - dynamic sizing based on rows
-  const spacing = 28; // fixed spacing
-  const pegRadius = 3;
-  const ballRadius = 3.2;
+  const spacing = 36; // increased spacing for wider layout
+  const pegRadius = 4;
+  const ballRadius = 4;
   const topMargin = 40;
   const bottomMargin = 200; // Increased to accommodate bins
-  const sidePadding = 40; // padding on left and right sides
+  const sidePadding = 50; // padding on left and right sides
   const binHeight = 30; // Fixed height for bins (very short)
   const gapBeforeHorizontalLine = 3; // Small gap between last peg row and column separators (like real Galton board)
 
@@ -775,8 +775,8 @@ export default function GaltonBoard() {
         </div>
 
         {/* Main Board Card - Centered */}
-        <div className="bg-white rounded-xl shadow-md p-4 sm:p-5 mx-auto w-full max-w-4xl">
-          <div className="relative w-full max-h-[70vh] overflow-hidden border-2 border-[#f2f2f2] rounded-lg bg-[#f7f7f7] flex items-start justify-center">
+        <div className="bg-white rounded-xl shadow-md p-4 sm:p-5 mx-auto w-full max-w-5xl">
+          <div className="relative w-full max-h-[70vh] overflow-x-auto overflow-y-hidden border-2 border-[#f2f2f2] rounded-lg bg-[#f7f7f7] flex items-start justify-center">
             <canvas 
               ref={canvasRef} 
               width={width} 
