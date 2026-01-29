@@ -42,7 +42,7 @@ export default function GaltonBoard() {
   const topMargin = 40;
   const bottomMargin = 200; // Increased to accommodate bins
   const sidePadding = 50; // padding on left and right sides
-  const binHeight = 30; // Fixed height for bins (very short)
+  const binHeight = 20; // Fixed height for bins (2/3 of previous)
   const gapBeforeHorizontalLine = 3; // Small gap between last peg row and column separators (like real Galton board)
 
   const canvasRef = useRef(null);
@@ -396,17 +396,31 @@ export default function GaltonBoard() {
       }
     });
 
-    // Draw tally numbers at the bottom of each column - perfectly centered
+    // Draw tally numbers inside the bars (just above the bar top)
     ctx.fillStyle = "#1e293b";
-    ctx.font = "500 14px Inter, sans-serif";
+    ctx.font = "500 11px Inter, sans-serif";
     ctx.textAlign = "center";
-    ctx.textBaseline = "top";
-    // Draw for all bins (0 through binCount-1)
+    ctx.textBaseline = "bottom";
     for (let i = 0; i < binCount && i < binCenters.length && i < binTallies.length; i++) {
       const count = binTallies[i];
       const bin = binCenters[i];
-      const textY = binBottom + 8; // Position text just below the column
-      ctx.fillText(count.toString(), bin.x, textY);
+      if (count > 0 && maxCount > 0) {
+        const availableHeight = binBottom - binTop;
+        const barHeight = (count / maxCount) * availableHeight;
+        const barTop = binBottom - barHeight;
+        ctx.fillText(count.toString(), bin.x, barTop - 2); // Position just above bar
+      }
+    }
+    
+    // Draw column labels (0, 1, 2...) as x-axis below the bins
+    ctx.fillStyle = "#64748b";
+    ctx.font = "500 12px Inter, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    for (let i = 0; i < binCount && i < binCenters.length; i++) {
+      const bin = binCenters[i];
+      const labelY = binBottom + 6; // Position below the bin area
+      ctx.fillText(i.toString(), bin.x, labelY);
     }
   };
   
@@ -669,55 +683,57 @@ export default function GaltonBoard() {
   }, [maxPercentage]);
 
   return (
-    <div className="w-full min-h-screen bg-slate-50 flex items-start justify-center pt-8 pb-8">
-      <div className="w-full max-w-7xl mx-auto px-4 box-border text-slate-900 flex flex-col gap-5">
-        {/* Controls at Top */}
-        <div className="bg-white rounded-xl shadow-md p-5 sm:p-6 mx-auto w-full max-w-4xl">
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-6 pb-4 border-b border-slate-200">
-            <div className="flex flex-wrap items-center gap-4">
-              <h1 className="text-xl sm:text-2xl font-bold m-0 text-slate-900">Interactive Galton Board</h1>
-              <span className="text-sm text-slate-600">
-                <strong>Balls dropped:</strong> {ballsDropped} &nbsp;|&nbsp; <strong>Tallied:</strong> {totalBalls}
+    <div className="w-full min-h-screen bg-slate-50 flex items-start justify-center pt-4 pb-4">
+      <div className="w-full max-w-7xl mx-auto px-4 box-border text-slate-900 flex flex-col gap-3">
+        {/* Combined Controls and Board */}
+        <div className="bg-white rounded-xl shadow-md p-4 sm:p-5 mx-auto w-full max-w-4xl">
+          {/* Header with title, counters, and buttons */}
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2 mb-3 pb-3 border-b border-slate-200">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-lg sm:text-xl font-bold m-0 text-slate-900">Interactive Galton Board</h1>
+              <span className="text-xs text-slate-600">
+                <strong>Dropped:</strong> {ballsDropped} | <strong>Tallied:</strong> {totalBalls}
               </span>
             </div>
             <div className="flex items-center gap-2">
               <button 
                 onClick={() => setRunning((r) => !r)} 
-                className="px-5 py-2 rounded-lg border-0 bg-[#1e4e78] hover:bg-[#1a4266] text-white cursor-pointer font-medium transition-all shadow-sm hover:shadow active:scale-95 text-sm whitespace-nowrap"
+                className="px-3 py-1.5 rounded-lg border-0 bg-[#1e4e78] hover:bg-[#1a4266] text-white cursor-pointer font-medium transition-all shadow-sm hover:shadow active:scale-95 text-xs whitespace-nowrap"
               >
                 {running ? "⏸ Stop" : "▶ Start"}
               </button>
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-slate-700">Drop</span>
+              <div className="flex items-center gap-1">
+                <span className="text-xs text-slate-700">Drop</span>
                 <input 
                   type="number" 
                   min={1} 
                   max={1000} 
                   value={dropCount} 
                   onChange={(e) => setDropCount(Math.max(1, parseInt(e.target.value) || 1))}
-                  className="w-16 px-2 py-1.5 rounded-lg border border-slate-300 text-center text-sm font-medium"
+                  className="w-12 px-1 py-1 rounded-lg border border-slate-300 text-center text-xs font-medium"
                 />
                 <button 
                   onClick={() => dropNBalls(dropCount)} 
-                  className="px-4 py-2 rounded-lg border-0 bg-[#1e4e78] hover:bg-[#1a4266] text-white cursor-pointer font-medium transition-all shadow-sm hover:shadow active:scale-95 text-sm whitespace-nowrap"
+                  className="px-3 py-1.5 rounded-lg border-0 bg-[#1e4e78] hover:bg-[#1a4266] text-white cursor-pointer font-medium transition-all shadow-sm hover:shadow active:scale-95 text-xs whitespace-nowrap"
                 >
                   Ball{dropCount > 1 ? 's' : ''}
                 </button>
               </div>
               <button 
                 onClick={reset} 
-                className="px-5 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-900 cursor-pointer font-medium transition-all shadow-sm hover:shadow active:scale-95 text-sm whitespace-nowrap"
+                className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-900 cursor-pointer font-medium transition-all shadow-sm hover:shadow active:scale-95 text-xs whitespace-nowrap"
               >
                 Reset
               </button>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
-              <div className="flex items-center justify-between mb-2">
+          {/* Sliders - more compact */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-3">
+            <div className="bg-slate-50 rounded-lg p-2 border border-slate-200">
+              <div className="flex items-center justify-between mb-1">
                 <label className="text-xs font-semibold text-slate-700">Rows</label>
-                <span className="text-base font-bold text-[#1e4e78] bg-white px-2 py-0.5 rounded-md">{rows}</span>
+                <span className="text-sm font-bold text-[#1e4e78] bg-white px-1.5 py-0.5 rounded-md">{rows}</span>
               </div>
               <input 
                 type="range" 
@@ -725,18 +741,18 @@ export default function GaltonBoard() {
                 max={20} 
                 value={rows} 
                 onChange={(e) => { setRows(parseInt(e.target.value)); }}
-                className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-[#1e4e78]"
+                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-[#1e4e78]"
               />
-              <div className="flex justify-between text-xs text-slate-500 mt-1">
+              <div className="flex justify-between text-xs text-slate-400 mt-0.5">
                 <span>1</span>
                 <span>20</span>
               </div>
             </div>
             
-            <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
-              <div className="flex items-center justify-between mb-2">
-                <label className="text-xs font-semibold text-slate-700">Left/Right Probability</label>
-                <span className="text-base font-bold text-[#1e4e78] bg-white px-2 py-0.5 rounded-md">{((1 - pRight) * 100).toFixed(0)}% / {(pRight * 100).toFixed(0)}%</span>
+            <div className="bg-slate-50 rounded-lg p-2 border border-slate-200">
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs font-semibold text-slate-700">Left/Right</label>
+                <span className="text-sm font-bold text-[#1e4e78] bg-white px-1.5 py-0.5 rounded-md">{((1 - pRight) * 100).toFixed(0)}%/{(pRight * 100).toFixed(0)}%</span>
               </div>
               <input 
                 type="range" 
@@ -745,18 +761,18 @@ export default function GaltonBoard() {
                 max={0.5} 
                 value={bias} 
                 onChange={(e) => { setBias(parseFloat(e.target.value)); }}
-                className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-[#1e4e78]"
+                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-[#1e4e78]"
               />
-              <div className="flex justify-between text-xs text-slate-500 mt-1">
-                <span>100% / 0%</span>
-                <span>0% / 100%</span>
+              <div className="flex justify-between text-xs text-slate-400 mt-0.5">
+                <span>100%/0%</span>
+                <span>0%/100%</span>
               </div>
             </div>
             
-            <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
-              <div className="flex items-center justify-between mb-2">
-                <label className="text-xs font-semibold text-slate-700">Drop Interval</label>
-                <span className="text-base font-bold text-[#1e4e78] bg-white px-2 py-0.5 rounded-md">{(dropIntervalMs / 1000).toFixed(2)} s</span>
+            <div className="bg-slate-50 rounded-lg p-2 border border-slate-200">
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs font-semibold text-slate-700">Interval</label>
+                <span className="text-sm font-bold text-[#1e4e78] bg-white px-1.5 py-0.5 rounded-md">{(dropIntervalMs / 1000).toFixed(2)}s</span>
               </div>
               <input 
                 type="range" 
@@ -764,24 +780,22 @@ export default function GaltonBoard() {
                 max={1500} 
                 value={dropIntervalMs} 
                 onChange={(e) => { setDropIntervalMs(parseInt(e.target.value)); }}
-                className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-[#1e4e78]"
+                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-[#1e4e78]"
               />
-              <div className="flex justify-between text-xs text-slate-500 mt-1">
-                <span>0.04 s</span>
-                <span>1.5 s</span>
+              <div className="flex justify-between text-xs text-slate-400 mt-0.5">
+                <span>0.04s</span>
+                <span>1.5s</span>
               </div>
             </div>
           </div>
-        </div>
 
-        {/* Main Board Card - Centered */}
-        <div className="bg-white rounded-xl shadow-md p-4 sm:p-5 mx-auto w-full max-w-4xl">
-          <div className="relative w-full max-h-[70vh] overflow-x-auto overflow-y-hidden border-2 border-[#f2f2f2] rounded-lg bg-[#f7f7f7] flex items-start justify-center">
+          {/* Canvas - in same box */}
+          <div className="relative w-full max-h-[60vh] overflow-x-auto overflow-y-hidden border-2 border-[#f2f2f2] rounded-lg bg-[#f7f7f7] flex items-start justify-center">
             <canvas 
               ref={canvasRef} 
               width={width} 
               height={height} 
-              className="max-h-[70vh] w-auto h-auto object-contain block" 
+              className="max-h-[60vh] w-auto h-auto object-contain block" 
             />
           </div>
         </div>
