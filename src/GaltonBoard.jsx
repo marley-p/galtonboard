@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, LineChart, Line, ReferenceLine, LabelList } from "recharts";
+import logoFicycle from "./assets/logo-ficycle.png";
 
 // clamp helper
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -32,7 +33,7 @@ export default function GaltonBoard() {
   const [bias, setBias] = useState(0);
   const [running, setRunning] = useState(false);
   const [ballsDropped, setBallsDropped] = useState(0);
-  const [showStats, setShowStats] = useState(true);
+  const [showStats, setShowStats] = useState(false);
   const [dropCount, setDropCount] = useState(1); // Number of balls to drop at once
 
   // Geometry - dynamic sizing based on rows
@@ -40,10 +41,10 @@ export default function GaltonBoard() {
   const pegRadius = 4;
   const ballRadius = 4;
   const topMargin = 40;
-  const bottomMargin = 200; // Increased to accommodate bins
+  const bottomMargin = 150; // Reduced to make bar graph area 75% of previous height
   const sidePadding = 50; // padding on left and right sides
-  const binHeight = 20; // Fixed height for bins (2/3 of previous)
-  const gapBeforeHorizontalLine = 3; // Small gap between last peg row and column separators (like real Galton board)
+  const binHeight = 15; // Fixed height for bins (reduced proportionally)
+  const gapBeforeHorizontalLine = 25; // Increased gap between last peg row and column separators to prevent tally overlap
 
   const canvasRef = useRef(null);
   const ballsRef = useRef([]);
@@ -51,12 +52,51 @@ export default function GaltonBoard() {
   const intervalRef = useRef(null);
   const launchBallRef = useRef(null);
   const dropNBallsIntervalRef = useRef(null); // For dropping N balls at intervals
+  const animatedBarHeightsRef = useRef([]); // For smooth bar animations
+  const MAX_BALLS_IN_FLIGHT = 500; // Prevent memory/performance issues
 
   const pRight = clamp(0.5 + bias, 0, 1);
 
   const binCount = rows + 1; // N+1 columns for N rows (column i = went right i times)
   const [binTallies, setBinTallies] = useState(() => Array(binCount).fill(0));
-  useEffect(() => setBinTallies(Array(binCount).fill(0)), [binCount]);
+  const [animatedTallies, setAnimatedTallies] = useState(() => Array(binCount).fill(0));
+  
+  // Reset tallies when binCount changes
+  useEffect(() => {
+    setBinTallies(Array(binCount).fill(0));
+    setAnimatedTallies(Array(binCount).fill(0));
+    animatedBarHeightsRef.current = Array(binCount).fill(0);
+  }, [binCount]);
+  
+  // Animate bar heights when tallies change
+  useEffect(() => {
+    const animationDuration = 150; // ms
+    const startTime = performance.now();
+    const startTallies = [...animatedTallies];
+    const targetTallies = [...binTallies];
+    
+    let animationId;
+    const animate = (now) => {
+      const elapsed = now - startTime;
+      const progress = Math.min(elapsed / animationDuration, 1);
+      // Ease out cubic for smooth deceleration
+      const eased = 1 - Math.pow(1 - progress, 3);
+      
+      const newAnimated = startTallies.map((start, i) => {
+        const target = targetTallies[i] ?? 0;
+        return start + (target - start) * eased;
+      });
+      
+      setAnimatedTallies(newAnimated);
+      
+      if (progress < 1) {
+        animationId = requestAnimationFrame(animate);
+      }
+    };
+    
+    animationId = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(animationId);
+  }, [binTallies]);
   
   const totalBalls = binTallies.reduce((a, b) => a + b, 0);
   
@@ -211,6 +251,10 @@ export default function GaltonBoard() {
 
   // Keep launchBall function ref updated so interval always uses latest values
   const launchBall = useCallback(() => {
+    // Prevent too many balls in flight (performance/crash protection)
+    if (ballsRef.current.length >= MAX_BALLS_IN_FLIGHT) {
+      return;
+    }
     const x0 = boardCenterX;
     const y0 = boardTop - spacing * 0.8;
     ballsRef.current.push(new QBall({ x0, y0, r: ballRadius, rows, spacing, pRight, rng: rngRef.current, rowYs }));
@@ -321,7 +365,7 @@ export default function GaltonBoard() {
   
   const drawBins = (ctx) => {
     const binTop = boardBottom + 2; // Start columns just below the pegs (small gap like real board)
-    const maxCount = Math.max(...binTallies, 1);
+    const maxCount = Math.max(...animatedTallies, 1);
     
     ctx.strokeStyle = "#cbd5e1";
     ctx.lineWidth = 1;
@@ -364,7 +408,7 @@ export default function GaltonBoard() {
     // Bars grow dynamically - tallest bar uses full available height
     ctx.fillStyle = "#0ea5e9";
     binCenters.forEach((bin, i) => {
-      const count = binTallies[i];
+      const count = animatedTallies[i] ?? 0;
       if (count > 0 && maxCount > 0) {
         // Calculate bar height - scale based on max count (tallest bar fills available space)
         const availableHeight = binBottom - binTop;
@@ -401,14 +445,15 @@ export default function GaltonBoard() {
     ctx.font = "500 11px Inter, sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "bottom";
-    for (let i = 0; i < binCount && i < binCenters.length && i < binTallies.length; i++) {
-      const count = binTallies[i];
+    for (let i = 0; i < binCount && i < binCenters.length && i < animatedTallies.length; i++) {
+      const animCount = animatedTallies[i] ?? 0;
+      const actualCount = binTallies[i] ?? 0; // Use actual count for display text
       const bin = binCenters[i];
-      if (count > 0 && maxCount > 0) {
+      if (animCount > 0 && maxCount > 0) {
         const availableHeight = binBottom - binTop;
-        const barHeight = (count / maxCount) * availableHeight;
+        const barHeight = (animCount / maxCount) * availableHeight;
         const barTop = binBottom - barHeight;
-        ctx.fillText(count.toString(), bin.x, barTop - 2); // Position just above bar
+        ctx.fillText(actualCount.toString(), bin.x, barTop - 2); // Position just above bar
       }
     }
     
@@ -555,10 +600,20 @@ export default function GaltonBoard() {
               }
             }
             const idx = clamp(columnIndex, 0, binCount - 1);
-            setBinTallies((prev) => { const next = prev.slice(); next[idx] += 1; return next; });
+            setBinTallies((prev) => { 
+              if (idx >= prev.length) return prev; // Safety check
+              const next = prev.slice(); 
+              next[idx] += 1; 
+              return next; 
+            });
           } else {
             const idx = clamp(b.rights, 0, binCount - 1);
-            setBinTallies((prev) => { const next = prev.slice(); next[idx] += 1; return next; });
+            setBinTallies((prev) => { 
+              if (idx >= prev.length) return prev; // Safety check
+              const next = prev.slice(); 
+              next[idx] += 1; 
+              return next; 
+            });
           }
           b.done = true;
         }
@@ -577,7 +632,7 @@ export default function GaltonBoard() {
 
     rafId = requestAnimationFrame(step);
     return () => cancelAnimationFrame(rafId);
-  }, [width, height, rows, spacing, boardCenterX, boardBottom, rowYs, G, BOUNCE_VY, AIR_DAMPING, pegRows, binCenters, binTallies, binHeight, binBottom, binCount]);
+  }, [width, height, rows, spacing, boardCenterX, boardBottom, rowYs, G, BOUNCE_VY, AIR_DAMPING, pegRows, binCenters, binTallies, animatedTallies, binHeight, binBottom, binCount]);
 
   // Calculate standard deviation positions
   const stdDevPositions = useMemo(() => {
@@ -815,7 +870,12 @@ export default function GaltonBoard() {
         </div>
         {showStats && (
         <div className="bg-white rounded-xl shadow-md p-5 sm:p-6 mx-auto w-full max-w-4xl">
-          <h3 className="text-xl font-bold mb-6 text-slate-900 border-b border-slate-200 pb-3">Statistics & Distribution</h3>
+          <div className="flex items-center justify-between mb-6 border-b border-slate-200 pb-3">
+            <h3 className="text-xl font-bold text-slate-900">Statistics & Distribution</h3>
+            <a href="https://ficycle.com" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 opacity-80 hover:opacity-100 transition-opacity">
+              <img src={logoFicycle} alt="Ficycle" className="h-8 w-auto" />
+            </a>
+          </div>
           
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
             {/* Key Metrics */}
