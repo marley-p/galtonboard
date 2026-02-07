@@ -53,50 +53,22 @@ export default function GaltonBoard() {
   const launchBallRef = useRef(null);
   const dropNBallsIntervalRef = useRef(null); // For dropping N balls at intervals
   const animatedBarHeightsRef = useRef([]); // For smooth bar animations
+  const binTalliesRef = useRef([]); // Ref for animation loop to read tallies without re-running effect
+  const animatedTalliesRef = useRef([]); // Smoothly interpolated tallies for canvas drawing
   const MAX_BALLS_IN_FLIGHT = 500; // Prevent memory/performance issues
 
   const pRight = clamp(0.5 + bias, 0, 1);
 
   const binCount = rows + 1; // N+1 columns for N rows (column i = went right i times)
   const [binTallies, setBinTallies] = useState(() => Array(binCount).fill(0));
-  const [animatedTallies, setAnimatedTallies] = useState(() => Array(binCount).fill(0));
   
   // Reset tallies when binCount changes
   useEffect(() => {
     setBinTallies(Array(binCount).fill(0));
-    setAnimatedTallies(Array(binCount).fill(0));
+    binTalliesRef.current = Array(binCount).fill(0);
+    animatedTalliesRef.current = Array(binCount).fill(0);
     animatedBarHeightsRef.current = Array(binCount).fill(0);
   }, [binCount]);
-  
-  // Animate bar heights when tallies change
-  useEffect(() => {
-    const animationDuration = 150; // ms
-    const startTime = performance.now();
-    const startTallies = [...animatedTallies];
-    const targetTallies = [...binTallies];
-    
-    let animationId;
-    const animate = (now) => {
-      const elapsed = now - startTime;
-      const progress = Math.min(elapsed / animationDuration, 1);
-      // Ease out cubic for smooth deceleration
-      const eased = 1 - Math.pow(1 - progress, 3);
-      
-      const newAnimated = startTallies.map((start, i) => {
-        const target = targetTallies[i] ?? 0;
-        return start + (target - start) * eased;
-      });
-      
-      setAnimatedTallies(newAnimated);
-      
-      if (progress < 1) {
-        animationId = requestAnimationFrame(animate);
-      }
-    };
-    
-    animationId = requestAnimationFrame(animate);
-    return () => cancelAnimationFrame(animationId);
-  }, [binTallies]);
   
   const totalBalls = binTallies.reduce((a, b) => a + b, 0);
   
@@ -354,7 +326,9 @@ export default function GaltonBoard() {
       dropNBallsIntervalRef.current = null;
     }
     ballsRef.current = []; 
-    setBinTallies(Array(binCount).fill(0)); 
+    setBinTallies(Array(binCount).fill(0));
+    binTalliesRef.current = Array(binCount).fill(0);
+    animatedTalliesRef.current = Array(binCount).fill(0);
     setBallsDropped(0);
   };
 
@@ -364,8 +338,10 @@ export default function GaltonBoard() {
   };
   
   const drawBins = (ctx) => {
+    const animTallies = animatedTalliesRef.current;
+    const actualTallies = binTalliesRef.current;
     const binTop = boardBottom + 2; // Start columns just below the pegs (small gap like real board)
-    const maxCount = Math.max(...animatedTallies, 1);
+    const maxCount = Math.max(...animTallies, 1);
     
     ctx.strokeStyle = "#cbd5e1";
     ctx.lineWidth = 1;
@@ -387,13 +363,11 @@ export default function GaltonBoard() {
       ctx.lineTo(leftWallX, binBottom);
       ctx.stroke();
       
-      // Draw walls at each peg position
+      // Draw walls at each peg position (all start at boardBottom, same as outer walls)
       bottomRow.forEach((peg) => {
-        const wallX = peg.x; // Wall x-position = peg x-position exactly (no offsets)
-        const wallStartY = peg.y; // Wall starts at the peg's y position
         ctx.beginPath();
-        ctx.moveTo(wallX, wallStartY);
-        ctx.lineTo(wallX, binBottom);
+        ctx.moveTo(peg.x, boardBottom);
+        ctx.lineTo(peg.x, binBottom);
         ctx.stroke();
       });
       
@@ -408,7 +382,7 @@ export default function GaltonBoard() {
     // Bars grow dynamically - tallest bar uses full available height
     ctx.fillStyle = "#0ea5e9";
     binCenters.forEach((bin, i) => {
-      const count = animatedTallies[i] ?? 0;
+      const count = animTallies[i] ?? 0;
       if (count > 0 && maxCount > 0) {
         // Calculate bar height - scale based on max count (tallest bar fills available space)
         const availableHeight = binBottom - binTop;
@@ -445,9 +419,9 @@ export default function GaltonBoard() {
     ctx.font = "500 11px Inter, sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "bottom";
-    for (let i = 0; i < binCount && i < binCenters.length && i < animatedTallies.length; i++) {
-      const animCount = animatedTallies[i] ?? 0;
-      const actualCount = binTallies[i] ?? 0; // Use actual count for display text
+    for (let i = 0; i < binCount && i < binCenters.length && i < animTallies.length; i++) {
+      const animCount = animTallies[i] ?? 0;
+      const actualCount = actualTallies[i] ?? 0; // Use actual count for display text
       const bin = binCenters[i];
       if (animCount > 0 && maxCount > 0) {
         const availableHeight = binBottom - binTop;
@@ -486,12 +460,16 @@ export default function GaltonBoard() {
 
   useEffect(() => { 
     ballsRef.current = []; 
-    setBinTallies(Array(rows + 1).fill(0)); 
+    setBinTallies(Array(rows + 1).fill(0));
+    binTalliesRef.current = Array(rows + 1).fill(0);
+    animatedTalliesRef.current = Array(rows + 1).fill(0);
     setBallsDropped(0);
   }, [rows]);
   useEffect(() => { 
     ballsRef.current = []; 
-    setBinTallies(Array(rows + 1).fill(0)); 
+    setBinTallies(Array(rows + 1).fill(0));
+    binTalliesRef.current = Array(rows + 1).fill(0);
+    animatedTalliesRef.current = Array(rows + 1).fill(0);
     setBallsDropped(0);
   }, [bias]);
 
@@ -517,6 +495,8 @@ export default function GaltonBoard() {
     const step = (now) => {
       const dt = Math.min(0.033, (now - last) / 1000);
       last = now;
+
+      let talliesChanged = false;
 
       ballsRef.current.forEach((b) => {
         if (b.done) return;
@@ -583,43 +563,50 @@ export default function GaltonBoard() {
         if (b.y - b.r >= boardBottom) {
           // Determine column based on x position
           const bottomRow = pegRows[rows - 1];
+          let idx = 0;
           if (bottomRow && bottomRow.length > 0) {
             const firstPegX = bottomRow[0].x;
             const lastPegX = bottomRow[bottomRow.length - 1].x;
-            let columnIndex = 0;
             if (b.x < firstPegX) {
-              columnIndex = 0;
+              idx = 0;
             } else if (b.x >= lastPegX) {
-              columnIndex = binCount - 1;
+              idx = binCount - 1;
             } else {
               for (let i = 0; i < bottomRow.length - 1; i++) {
                 if (b.x >= bottomRow[i].x && b.x < bottomRow[i + 1].x) {
-                  columnIndex = i + 1;
+                  idx = i + 1;
                   break;
                 }
               }
             }
-            const idx = clamp(columnIndex, 0, binCount - 1);
-            setBinTallies((prev) => { 
-              if (idx >= prev.length) return prev; // Safety check
-              const next = prev.slice(); 
-              next[idx] += 1; 
-              return next; 
-            });
+            idx = clamp(idx, 0, binCount - 1);
           } else {
-            const idx = clamp(b.rights, 0, binCount - 1);
-            setBinTallies((prev) => { 
-              if (idx >= prev.length) return prev; // Safety check
-              const next = prev.slice(); 
-              next[idx] += 1; 
-              return next; 
-            });
+            idx = clamp(b.rights, 0, binCount - 1);
+          }
+          // Update ref directly (no state update per ball - batched below)
+          if (idx >= 0 && idx < binTalliesRef.current.length) {
+            binTalliesRef.current[idx] += 1;
+            talliesChanged = true;
           }
           b.done = true;
         }
       });
 
+      // Batch state update once per frame (triggers React re-render for stats/histogram)
+      if (talliesChanged) {
+        setBinTallies([...binTalliesRef.current]);
+      }
+
       ballsRef.current = ballsRef.current.filter((b) => !b.done);
+
+      // Smoothly interpolate animated tallies toward actual tallies each frame
+      const targetTallies = binTalliesRef.current;
+      const animTallies = animatedTalliesRef.current;
+      for (let i = 0; i < targetTallies.length; i++) {
+        const target = targetTallies[i];
+        const current = animTallies[i] ?? 0;
+        animTallies[i] = current + (target - current) * 0.2;
+      }
 
       ctx.clearRect(0, 0, width, height);
       drawPegs(ctx);
@@ -632,7 +619,7 @@ export default function GaltonBoard() {
 
     rafId = requestAnimationFrame(step);
     return () => cancelAnimationFrame(rafId);
-  }, [width, height, rows, spacing, boardCenterX, boardBottom, rowYs, G, BOUNCE_VY, AIR_DAMPING, pegRows, binCenters, binTallies, animatedTallies, binHeight, binBottom, binCount]);
+  }, [width, height, rows, spacing, boardCenterX, boardBottom, rowYs, G, BOUNCE_VY, AIR_DAMPING, pegRows, binCenters, binHeight, binBottom, binCount]);
 
   // Calculate standard deviation positions
   const stdDevPositions = useMemo(() => {
