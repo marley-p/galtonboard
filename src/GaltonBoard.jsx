@@ -234,6 +234,7 @@ export default function GaltonBoard() {
   }, [boardCenterX, boardTop, spacing, ballRadius, rows, pRight, rowYs]);
 
   // Drop N balls at the current drop interval (not all at once)
+  // Uses launchBallRef so the interval always picks up the latest geometry
   const dropNBalls = useCallback((n) => {
     const count = Math.max(1, Math.min(1000, n)); // Limit to 1-1000
     let dropped = 0;
@@ -244,19 +245,13 @@ export default function GaltonBoard() {
     }
     
     // Drop first ball immediately
-    const x0 = boardCenterX;
-    const y0 = boardTop - spacing * 0.8;
-    ballsRef.current.push(new QBall({ x0, y0, r: ballRadius, rows, spacing, pRight, rng: rngRef.current, rowYs }));
-    setBallsDropped((d) => d + 1);
+    if (launchBallRef.current) launchBallRef.current();
     dropped++;
     
-    // If more balls to drop, set up interval
+    // If more balls to drop, set up interval using ref to avoid stale closures
     if (dropped < count) {
       dropNBallsIntervalRef.current = setInterval(() => {
-        const x0 = boardCenterX;
-        const y0 = boardTop - spacing * 0.8;
-        ballsRef.current.push(new QBall({ x0, y0, r: ballRadius, rows, spacing, pRight, rng: rngRef.current, rowYs }));
-        setBallsDropped((d) => d + 1);
+        if (launchBallRef.current) launchBallRef.current();
         dropped++;
         
         if (dropped >= count) {
@@ -265,7 +260,7 @@ export default function GaltonBoard() {
         }
       }, Math.max(40, dropIntervalMs));
     }
-  }, [boardCenterX, boardTop, spacing, ballRadius, rows, pRight, rowYs, dropIntervalMs]);
+  }, [dropIntervalMs]);
 
   // Update the ref whenever launchBall changes
   useEffect(() => {
@@ -459,6 +454,11 @@ export default function GaltonBoard() {
   const AIR_DAMPING = 0.002; // Air resistance (horizontal only)
 
   useEffect(() => { 
+    // Cancel any pending drop-N-balls interval so stale balls don't spawn
+    if (dropNBallsIntervalRef.current) {
+      clearInterval(dropNBallsIntervalRef.current);
+      dropNBallsIntervalRef.current = null;
+    }
     ballsRef.current = []; 
     setBinTallies(Array(rows + 1).fill(0));
     binTalliesRef.current = Array(rows + 1).fill(0);
@@ -466,6 +466,11 @@ export default function GaltonBoard() {
     setBallsDropped(0);
   }, [rows]);
   useEffect(() => { 
+    // Cancel any pending drop-N-balls interval so stale balls don't spawn
+    if (dropNBallsIntervalRef.current) {
+      clearInterval(dropNBallsIntervalRef.current);
+      dropNBallsIntervalRef.current = null;
+    }
     ballsRef.current = []; 
     setBinTallies(Array(rows + 1).fill(0));
     binTalliesRef.current = Array(rows + 1).fill(0);
